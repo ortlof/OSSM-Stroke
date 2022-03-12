@@ -502,9 +502,12 @@ void CableRemoteTask(void *pvParameters)
           }
           break;
     }
-     speed = getAnalogAverage(SPEED_POT_PIN, 50); // get average analog reading, function takes pin and # samples
+     speed = getAnalogAverage(SPEED_POT_PIN, 200); // get average analog reading, function takes pin and # samples
      g_ui.UpdateStateL(speed);
-     speed = map(speed, 0, 99.0, 0, USER_SPEEDLIMIT);
+     //LogDebug(speed);
+     speed = fscale(0.00, 99.98, 0.5, USER_SPEEDLIMIT, speed, -1);
+     //LogDebug(speed);
+     
      Stroker.setSpeed(speed, true);
      vTaskDelay(100);
    }
