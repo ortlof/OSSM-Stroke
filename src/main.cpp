@@ -15,6 +15,16 @@
 #define BTN_LONG   2
 #define BTN_V_LONG 3
 
+#define SPEED 1
+#define DEPTH 2
+#define STROKE 3
+#define SENSATION 4
+#define PATTERN 5
+#define TORQE 6
+#define 
+#define OFF 10
+#define ON   11
+
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
 
@@ -30,6 +40,8 @@ float out_esp_sensation;
 float out_esp_pattern;
 bool out_esp_rstate;
 bool out_esp_connected;
+int out_esp_command;
+float out_esp_value;
 
 float incoming_esp_speed;
 float incoming_esp_depth;
@@ -38,6 +50,8 @@ float incoming_esp_sensation;
 float incoming_esp_pattern;
 bool incoming_esp_rstate;
 bool incoming_esp_connected;
+int incoming_esp_command;
+float incoming_esp_value;
 
 typedef struct struct_message {
   float esp_speed;
@@ -47,6 +61,8 @@ typedef struct struct_message {
   float esp_pattern;
   bool esp_rstate;
   bool esp_connected;
+  int esp_command;
+  float esp_value;
 } struct_message;
 
 bool esp_connect = false;
@@ -78,7 +94,6 @@ RotaryEncoder *encoder;
 // State Machine Local Remote
 enum States {START, HOME, M_MENUE, M_SET_DEPTH, M_SET_STROKE, M_SET_SENSATION, M_SET_PATTERN, M_SET_DEPTH_INT, M_SET_DEPTH_FANCY, OPT_SET_DEPTH, OPT_SET_STROKE, OPT_SET_SENSATION, OPT_SET_PATTERN, OPT_SET_DEPTH_INT, OPT_SET_DEPTH_FANCY};
 uint8_t state = START;
-
 
 // Display LocaL Remote
 OssmUi g_ui(REMOTE_ADDRESS, REMOTE_SDA, REMOTE_CLK);
@@ -182,25 +197,37 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     outgoingcontrol.esp_connected = true;
     outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
     outgoingcontrol.esp_depth = MAX_STROKEINMM;
-    outgoingcontrol.esp_stroke = MAX_STROKEINMM;
-    outgoingcontrol.esp_sensation = 0.0;
     outgoingcontrol.esp_pattern = Stroker.getPattern();
     esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
     if (result == ESP_OK) {
       esp_connect = true;
     }
-    else {
-   }
   } else if(esp_connect == true && incomingcontrol.esp_connected == true){
-    Stroker.setSpeed(incomingcontrol.esp_speed, false);
-    Stroker.setDepth(incomingcontrol.esp_depth, false);
-    Stroker.setStroke(incomingcontrol.esp_stroke, false);
-    Stroker.setSensation(incomingcontrol.esp_sensation, false);
-    Stroker.setPattern(incomingcontrol.esp_pattern, false);
-    if(incomingcontrol.esp_rstate == true){
+    LogDebug(incomingcontrol.esp_command);
+    LogDebug(incomingcontrol.esp_value);
+    switch(incomingcontrol.esp_command)
+    {
+      case ON:
       Stroker.startPattern();
-    } else {
-     Stroker.stopMotion();
+      break;
+      case OFF:
+      Stroker.stopMotion();
+      break;
+      case SPEED:
+      Stroker.setSpeed(incomingcontrol.esp_value, true);
+      break;
+      case DEPTH:
+      Stroker.setDepth(incomingcontrol.esp_value, false);
+      break;
+      case STROKE:
+      Stroker.setStroke(incomingcontrol.esp_value, false);
+      break;
+      case SENSATION:
+      Stroker.setSensation(incomingcontrol.esp_value, false);
+      break;
+      case PATTERN:
+      Stroker.setPattern(incomingcontrol.esp_value, false);
+      break;      
     }
   }
 }
