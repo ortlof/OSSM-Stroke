@@ -29,7 +29,7 @@
 #define ENC_CLK 18                      // Encoder A
 #define ENC_DT 5                        // Encoder B
 #define ENC_TOL 2                       // 2 Clicks of Tolerance
-#define V_LONG_PRESS_MS 500             // Encoder Switch Long Press Activation Time in ms
+#define V_LONG_PRESS_MS 300             // Encoder Switch Long Press Activation Time in ms
 #define LONG_PRESS_MS 50                // Encoder Switch Short Press Activation Time in ms
 #define REMOTE_SDA 21
 #define REMOTE_CLK 19
