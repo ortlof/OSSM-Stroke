@@ -21,7 +21,6 @@
 #define SENSATION 4
 #define PATTERN 5
 #define TORQE 6
-#define 
 #define OFF 10
 #define ON   11
 
@@ -217,16 +216,16 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       Stroker.setSpeed(incomingcontrol.esp_value, true);
       break;
       case DEPTH:
-      Stroker.setDepth(incomingcontrol.esp_value, false);
+      Stroker.setDepth(incomingcontrol.esp_value, true);
       break;
       case STROKE:
-      Stroker.setStroke(incomingcontrol.esp_value, false);
+      Stroker.setStroke(incomingcontrol.esp_value, true);
       break;
       case SENSATION:
-      Stroker.setSensation(incomingcontrol.esp_value, false);
+      Stroker.setSensation(incomingcontrol.esp_value, true);
       break;
       case PATTERN:
-      Stroker.setPattern(incomingcontrol.esp_value, false);
+      Stroker.setPattern(incomingcontrol.esp_value, true);
       break;      
     }
   }
@@ -297,6 +296,9 @@ void setup() {
   while (Stroker.getState() != READY) {
     delay(100);
   }
+  Stroker.setSpeed(0.0, true);
+  Stroker.setDepth(0.0, true);
+  Stroker.setStroke(0.0, true);
 }
 
 void loop() {
