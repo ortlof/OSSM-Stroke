@@ -23,6 +23,9 @@
 #define TORQE 6
 #define OFF 10
 #define ON   11
+#define SETUP_D_I 12
+#define SETUP_D_I_F 13
+#define REBOOT 14
 
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
@@ -193,6 +196,12 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&incomingcontrol, incomingData, sizeof(incomingcontrol));
   if(esp_connect == false && incomingcontrol.esp_connected == false){
+    switch(incomingcontrol.esp_command)
+    {
+      case REBOOT:
+      ESP.restart();
+      break; 
+    }
     outgoingcontrol.esp_connected = true;
     outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
     outgoingcontrol.esp_depth = MAX_STROKEINMM;
@@ -225,8 +234,21 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       Stroker.setSensation(incomingcontrol.esp_value, true);
       break;
       case PATTERN:
-      Stroker.setPattern(incomingcontrol.esp_value, true);
-      break;      
+      {
+      int patter = incomingcontrol.esp_value;
+      Stroker.setPattern(patter, true);
+      LogDebug(Stroker.getPatternName(patter));
+      }
+      break;
+      case SETUP_D_I:
+      Stroker.setupDepth(10, false);
+      break;
+      case SETUP_D_I_F:
+      Stroker.setupDepth(10, true);
+      break;
+      case REBOOT:
+      ESP.restart();
+      break;     
     }
   }
 }
@@ -309,8 +331,8 @@ void emergencyStopTask(void *pvParameters)
 {
  for (;;)
   { 
-    bool alm = digitalRead(SERVO_ALM_PIN);
-    bool ped = digitalRead(SERVO_PED_PIN);
+    //bool alm = digitalRead(SERVO_ALM_PIN);
+    //bool ped = digitalRead(SERVO_PED_PIN);
     //LogDebugFormatted("ALM: %ld \n", static_cast<long int>(alm));
     //LogDebugFormatted("PED: %ld \n", static_cast<long int>(ped));
     static bool is_connected = false;
