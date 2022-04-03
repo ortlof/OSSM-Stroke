@@ -9,6 +9,8 @@
 #include "OssmUi.h"           // Separate file that helps contain the OLED screen functions for Local Remotes
 #include <esp_now.h>
 #include <WiFi.h>
+#include "ModbusClientRTU.h"
+
 
 #define BTN_NONE   0
 #define BTN_SHORT  1
@@ -20,7 +22,8 @@
 #define STROKE 3
 #define SENSATION 4
 #define PATTERN 5
-#define TORQE 6
+#define TORQE_F 6
+#define TORQE_R 7
 #define OFF 10
 #define ON   11
 #define SETUP_D_I 12
@@ -73,6 +76,8 @@ struct_message outgoingcontrol;
 struct_message incomingcontrol;
 
 esp_now_peer_info_t peerInfo;
+ModbusClientRTU MB(Serial2);
+uint32_t Token = 1111;
 
 
 ///////////////////////////////////////////
@@ -180,6 +185,21 @@ void homingNotification(bool isHomed) {
   }
 }
 
+// Mobus for RS232
+void handleData(ModbusMessage msg, uint32_t token){
+  Serial.printf("Response: serverID=%d, FC=%d, Token=%08X, length=%d:\n", msg.getServerID(), msg.getFunctionCode(), token, msg.size());
+  for (auto& byte : msg) {
+    Serial.printf("%02X ", byte);
+  Serial.println("");
+}
+}
+
+void handleError(Error error, uint32_t token){
+  // ModbusError wraps the error code and provides a readable error message for it
+  ModbusError me(error);
+  Serial.printf("Error response: %02X - %s\n", error, (const char *)me);
+}
+
 // Callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   Serial.print("\r\nLast Packet Send Status:\t");
@@ -240,6 +260,28 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       LogDebug(Stroker.getPatternName(patter));
       }
       break;
+      case TORQE_F:
+      {
+        int torqe = incomingcontrol.esp_value * 10;
+        LogDebug(torqe);
+        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FE, torqe);
+        if (err!=SUCCESS) {
+        ModbusError e(err);
+        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+        }
+      }
+      break;
+      case TORQE_R:
+      {
+        int torqe = 65535 - (incomingcontrol.esp_value * -10);
+        LogDebug(torqe);
+        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FF, torqe);
+        if (err!=SUCCESS) {
+        ModbusError e(err);
+        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+        }
+      }
+      break;
       case SETUP_D_I:
       Stroker.setupDepth(10, false);
       break;
@@ -255,6 +297,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
 
 void setup() {
   Serial.begin(115200);         // Start Serial.
+  Serial2.begin(57600, SERIAL_8E1, GPIO_NUM_16, GPIO_NUM_17);
   LogDebug("\n Starting");      // Start LogDebug
   delay(200);
   
@@ -262,6 +305,17 @@ void setup() {
   FastLED.setBrightness(150);
   setLedRainbow(leds);
   FastLED.show();
+
+  MB.onDataHandler(&handleData);
+  MB.onErrorHandler(&handleError);
+  MB.setTimeout(2000);
+  MB.begin();
+  
+  Error err = MB.addRequest(Token++, 1, READ_HOLD_REGISTER, 0x01FE, 1);
+  if (err!=SUCCESS) {
+  ModbusError e(err);
+  Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+  }
 
   // OLED SETUP
   g_ui.Setup();
