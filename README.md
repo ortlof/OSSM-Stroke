@@ -3,6 +3,10 @@
 New Codebase for OSSM - Open Source Sex Machine 
 Integration of theelims StrokeEngine https://github.com/theelims/StrokeEngine
 
+When your came here Looking for the M5 Version its in a Sub Tree right now: 
+
+https://github.com/ortlof/OSSM-Stroke/tree/OSSM_ESP_Remote
+
 Flash with Platform IO. 
 
 First Version Local Control with Remote.
