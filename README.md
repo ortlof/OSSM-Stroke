@@ -5,7 +5,20 @@ Integration of theelims StrokeEngine https://github.com/theelims/StrokeEngine
 
 Flash with Platform IO. 
 
-First Version Local Control with Remote.
+First Version Local Control with Remote & M5 Remote. 
+For Code and Hardware for the M5 Remote itself look here: https://github.com/ortlof/OSSM-M5-Remote
+
+You need to set you mac adresses in both codes right now Manual:
+
+After building both codes they display MAC's in Serial Console.
+Find Line and Change to your OSSM MAC in OSSM code you have to Set the mac of your Remote. 
+
+MAC in Serial Looks like: 34:86:5D:57:F5:84
+
+Change to this:
+
+"#define OSSM 1"
+"uint8_t OSSM_Address[] = {0x34, 0x86, 0x5d, 0x57, 0xf5, 0x84};"
 
 # Display Menü 
 
