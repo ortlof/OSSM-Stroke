@@ -17,6 +17,7 @@
 #define BTN_LONG   2
 #define BTN_V_LONG 3
 
+#define CONN 0
 #define SPEED 1
 #define DEPTH 2
 #define STROKE 3
@@ -222,6 +223,17 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       ESP.restart();
       break; 
     }
+    outgoingcontrol.esp_connected = true;
+    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+    outgoingcontrol.esp_depth = MAX_STROKEINMM;
+    outgoingcontrol.esp_pattern = Stroker.getPattern();
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+    if (result == ESP_OK) {
+      esp_connect = true;
+    }
+  } else if(esp_connect == true && incomingcontrol.esp_connected == false){
+    Stroker.disable();
+    Stroker.enableAndHome(&endstop, homingNotification);
     outgoingcontrol.esp_connected = true;
     outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
     outgoingcontrol.esp_depth = MAX_STROKEINMM;
