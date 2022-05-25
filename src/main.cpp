@@ -248,22 +248,36 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     switch(incomingcontrol.esp_command)
     {
       case ON:
+      LogDebug("Depth:");
+      LogDebug(Stroker.getDepth());
+      LogDebug("Speed:");
+      LogDebug(Stroker.getSpeed());
+      LogDebug("Pattern:");
+      LogDebug(Stroker.getPattern());
       Stroker.startPattern();
       break;
       case OFF:
       Stroker.stopMotion();
+      LogDebug("Depth:");
+      LogDebug(Stroker.getDepth());
+      LogDebug("Speed:");
+      LogDebug(Stroker.getSpeed());
       break;
       case SPEED:
-      Stroker.setSpeed(incomingcontrol.esp_value, true);
+      speed = incomingcontrol.esp_value; 
+      Stroker.setSpeed(speed, true);
       break;
       case DEPTH:
-      Stroker.setDepth(incomingcontrol.esp_value, true);
+      depth = incomingcontrol.esp_value;
+      Stroker.setDepth(depth, true);
       break;
       case STROKE:
-      Stroker.setStroke(incomingcontrol.esp_value, true);
+      stroke = incomingcontrol.esp_value;
+      Stroker.setStroke(stroke, true);
       break;
       case SENSATION:
-      Stroker.setSensation(incomingcontrol.esp_value, true);
+      sensation = incomingcontrol.esp_value;
+      Stroker.setSensation(sensation, true);
       break;
       case PATTERN:
       {
