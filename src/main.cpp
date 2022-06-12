@@ -10,6 +10,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include "ModbusClientRTU.h"
+#include "OneButton.h"
 
 
 #define BTN_NONE   0
@@ -31,10 +32,11 @@
 #define SETUP_D_I_F 13
 #define REBOOT 14
 
+OneButton ALM(SERVO_ALM_PIN, false);
+OneButton PED(SERVO_PED_PIN, false);
+
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
-
-uint8_t broadcastAddress[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
 
 // Variable to store if sending data was successful
 String success;
@@ -171,6 +173,8 @@ void emergencyStopTask(void *pvParameters); // Handels all Higher Emergency Stop
 void CableRemoteTask(void *pvParameters);  // Handels all Functions from Cable Remote
 void espNowRemoteTask(void *pvParameters); // Handels the EspNow Remote
 void setLedRainbow(CRGB leds[]);
+void almclick();
+void pedclick();
 
 float getAnalogAverage(int pinNumber, int samples);
 
@@ -248,20 +252,10 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     switch(incomingcontrol.esp_command)
     {
       case ON:
-      LogDebug("Depth:");
-      LogDebug(Stroker.getDepth());
-      LogDebug("Speed:");
-      LogDebug(Stroker.getSpeed());
-      LogDebug("Pattern:");
-      LogDebug(Stroker.getPattern());
       Stroker.startPattern();
       break;
       case OFF:
       Stroker.stopMotion();
-      LogDebug("Depth:");
-      LogDebug(Stroker.getDepth());
-      LogDebug("Speed:");
-      LogDebug(Stroker.getSpeed());
       break;
       case SPEED:
       speed = incomingcontrol.esp_value; 
@@ -387,6 +381,8 @@ void setup() {
 
   pinMode(SERVO_ALM_PIN, INPUT);
   pinMode(SERVO_PED_PIN, INPUT);
+  //ALM.attachClick(almclick);
+  //PED.attachClick(pedclick);
 
   pinMode(SPEED_POT_PIN, INPUT);
   adcAttachPin(SPEED_POT_PIN);
@@ -405,6 +401,8 @@ void setup() {
 
 void loop() {
   g_ui.UpdateScreen();
+  //PED.tick();
+  //ALM.tick();
 }
 
 void emergencyStopTask(void *pvParameters)
@@ -807,4 +805,12 @@ void setLedRainbow(CRGB leds[])
         FastLED.show();
         delay(4);
     }
+}
+
+void almclick(){
+  LogDebug("ALM clicked");
+}
+
+void pedclick(){
+  LogDebug("PED clicked");
 }
