@@ -3,7 +3,7 @@
 #include <SPI.h>
 #include <StrokeEngine.h>     // Include Stroke Engine
 #include "OSSM_Config.h"      // START HERE FOR Configuration
-#include "OSSM_PinDef.h"      // This is where you set pins specific for your board
+#include "OSSM_PinDEF.h"      // This is where you set pins specific for your board
 #include "FastLED.h"          // Used for the LED on the Reference Board (or any other pixel LEDS you may add)
 #include "RotaryEncoder.h"
 #include "OssmUi.h"           // Separate file that helps contain the OLED screen functions for Local Remotes
