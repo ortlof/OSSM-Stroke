@@ -231,7 +231,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
     outgoingcontrol.esp_depth = MAX_STROKEINMM;
     outgoingcontrol.esp_pattern = Stroker.getPattern();
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+    esp_err_t result = esp_now_send(Remote_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
     if (result == ESP_OK) {
       esp_connect = true;
     }
@@ -242,7 +242,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
     outgoingcontrol.esp_depth = MAX_STROKEINMM;
     outgoingcontrol.esp_pattern = Stroker.getPattern();
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+    esp_err_t result = esp_now_send(Remote_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
     if (result == ESP_OK) {
       esp_connect = true;
     }
@@ -756,7 +756,7 @@ void espNowRemoteTask(void *pvParameters)
     esp_now_register_send_cb(OnDataSent);
 
     // Register peer
-    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+    memcpy(peerInfo.peer_addr, Remote_Address, 6);
     peerInfo.channel = 0;  
     peerInfo.encrypt = false;
   

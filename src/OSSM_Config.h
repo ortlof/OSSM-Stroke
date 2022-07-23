@@ -3,6 +3,12 @@
 */
 
 /*
+        Remote config
+*/
+
+uint8_t Remote_Address[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
+
+/*
         Motion System Config
 */
 
@@ -31,7 +37,3 @@
 // The minimum value of the pot in percent
 // prevents noisy pots registering commands when turned down to zero by user
 const float commandDeadzonePercentage = 1.0f;
-
-//OSSM M5 Remote MAC
-
-uint8_t broadcastAddress[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
