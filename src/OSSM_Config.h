@@ -3,6 +3,16 @@
 */
 
 /*
+        Remote config
+*/
+uint8_t Broadcast_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t Remote_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+//uint8_t Remote_Address[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
+
+#define OSSM_ID  1 //OSSM_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
+#define M5_ID 99 //M5_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
+
+/*
         Motion System Config
 */
 
@@ -16,7 +26,7 @@
 // your rail is usable.
 // The absolute max your OSSM would have is the distance between the belt attachments subtract
 // the linear block holder length (75mm on OSSM)
-#define MAX_STROKEINMM 170.0  // Real physical travel from one hard endstop to the other
+#define MAX_STROKEINMM 180.0  // Real physical travel from one hard endstop to the other
 #define STROKEBOUNDARY 10.0  // Safe distance the motion is constrained to avoiding crashes
 
 // Calculation Aid:
@@ -26,7 +36,7 @@
 #define DEPTH_RESULTION 5 // Depth Resultion in mm per encoder Klick
 #define STROKE_RESULTION 5 // STROKE Resultion in mm per encoder Klick
 #define ENCODER_RESULTION 36 // Klicks per turn
-#define USER_SPEEDLIMIT 300 // Speed in Cycles (in & out) per minute.
+#define USER_SPEEDLIMIT 900 // Speed in Cycles (in & out) per minute.
 
 // The minimum value of the pot in percent
 // prevents noisy pots registering commands when turned down to zero by user

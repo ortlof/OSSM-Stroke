@@ -7,14 +7,90 @@
 #include "FastLED.h"          // Used for the LED on the Reference Board (or any other pixel LEDS you may add)
 #include "RotaryEncoder.h"
 #include "OssmUi.h"           // Separate file that helps contain the OLED screen functions for Local Remotes
+#include <esp_now.h>
+#include <WiFi.h>
+#include "ModbusClientRTU.h"
+#include "OneButton.h"
+
 
 #define BTN_NONE   0
 #define BTN_SHORT  1
 #define BTN_LONG   2
 #define BTN_V_LONG 3
 
+#define CONN 0
+#define SPEED 1
+#define DEPTH 2
+#define STROKE 3
+#define SENSATION 4
+#define PATTERN 5
+#define TORQE_F 6
+#define TORQE_R 7
+#define OFF 10
+#define ON   11
+#define SETUP_D_I 12
+#define SETUP_D_I_F 13
+#define REBOOT 14
+#define CONNECT 88
+#define HEARTBEAT 99
+
+OneButton ALM(SERVO_ALM_PIN, false);
+OneButton PED(SERVO_PED_PIN, false);
+
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
+
+// Variable to store if sending data was successful
+String success;
+
+float out_esp_speed;
+float out_esp_depth;
+float out_esp_stroke;
+float out_esp_sensation;
+float out_esp_pattern;
+bool out_esp_rstate;
+bool out_esp_connected;
+int out_esp_command;
+float out_esp_value;
+int out_esp_target;
+
+float incoming_esp_speed;
+float incoming_esp_depth;
+float incoming_esp_stroke;
+float incoming_esp_sensation;
+float incoming_esp_pattern;
+bool incoming_esp_rstate;
+bool incoming_esp_connected;
+bool incoming_esp_heartbeat;
+int incoming_esp_command;
+float incoming_esp_value;
+int incoming_esp_target;
+
+typedef struct struct_message {
+  float esp_speed;
+  float esp_depth;
+  float esp_stroke;
+  float esp_sensation;
+  float esp_pattern;
+  bool esp_rstate;
+  bool esp_connected;
+  bool esp_heartbeat;
+  int esp_command;
+  float esp_value;
+  int esp_target;
+} struct_message;
+
+bool m5_first_connect = false;
+bool heartbeat = false;
+bool m5_remotelost = false;
+
+struct_message outgoingcontrol;
+struct_message incomingcontrol;
+
+esp_now_peer_info_t peerInfo;
+ModbusClientRTU MB(Serial2);
+uint32_t Token = 1111;
+
 
 ///////////////////////////////////////////
 ////
@@ -29,7 +105,7 @@ volatile float sensation = 0;
 float speed     = 0.0;
 float depth     = 0.0;
 float stroke    = 0.0;
-float zero = 0.0;
+float zero      = 0.0;
 int pattern = 0;
 
 RotaryEncoder *encoder;
@@ -37,9 +113,6 @@ RotaryEncoder *encoder;
 // State Machine Local Remote
 enum States {START, HOME, M_MENUE, M_SET_DEPTH, M_SET_STROKE, M_SET_SENSATION, M_SET_PATTERN, M_SET_DEPTH_INT, M_SET_DEPTH_FANCY, OPT_SET_DEPTH, OPT_SET_STROKE, OPT_SET_SENSATION, OPT_SET_PATTERN, OPT_SET_DEPTH_INT, OPT_SET_DEPTH_FANCY};
 uint8_t state = START;
-
-
-
 
 // Display LocaL Remote
 OssmUi g_ui(REMOTE_ADDRESS, REMOTE_SDA, REMOTE_CLK);
@@ -95,6 +168,7 @@ StrokeEngine Stroker;
 
 TaskHandle_t estop_T    = nullptr;  // Estop Taks for Emergency 
 TaskHandle_t CRemote_T  = nullptr;  // Cable Remote Task 
+TaskHandle_t eRemote_t  = nullptr;  // Esp Now Remote
 
 #define BRIGHTNESS 170
 #define LED_TYPE WS2811
@@ -106,10 +180,16 @@ CRGB leds[NUM_LEDS];
 // Declarations
 void emergencyStopTask(void *pvParameters); // Handels all Higher Emergency Stop Functions
 void CableRemoteTask(void *pvParameters);  // Handels all Functions from Cable Remote
+void espNowRemoteTask(void *pvParameters); // Handels the EspNow Remote
 void setLedRainbow(CRGB leds[]);
+void almclick();
+void pedclick();
 
 float getAnalogAverage(int pinNumber, int samples);
 
+
+unsigned long Heartbeat_Time = 0;
+const long Heartbeat_Interval = 15000;
 
 // Homing Feedback Serial
 void homingNotification(bool isHomed) {
@@ -122,8 +202,139 @@ void homingNotification(bool isHomed) {
   }
 }
 
+// Mobus for RS232
+void handleData(ModbusMessage msg, uint32_t token){
+  Serial.printf("Response: serverID=%d, FC=%d, Token=%08X, length=%d:\n", msg.getServerID(), msg.getFunctionCode(), token, msg.size());
+  for (auto& byte : msg) {
+    Serial.printf("%02X ", byte);
+  Serial.println("");
+}
+}
+
+void handleError(Error error, uint32_t token){
+  // ModbusError wraps the error code and provides a readable error message for it
+  ModbusError me(error);
+  Serial.printf("Error response: %02X - %s\n", error, (const char *)me);
+}
+
+// Callback when data is sent
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+}
+
+// Callback when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&incomingcontrol, incomingData, sizeof(incomingcontrol));
+  switch(incomingcontrol.esp_target)
+  {
+    case OSSM_ID:
+    {
+    if(m5_first_connect == true && m5_remotelost == false){
+    LogDebug(incomingcontrol.esp_command);
+    LogDebug(incomingcontrol.esp_value);
+    switch(incomingcontrol.esp_command)
+    {
+      case ON:
+      {
+      LogDebug("ON Got");
+      Stroker.startPattern();
+      outgoingcontrol.esp_command = ON;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      }
+      break;
+      case OFF:
+      {
+      LogDebug("OFF Got");
+      Stroker.stopMotion();
+      outgoingcontrol.esp_command = OFF;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      }
+      break;
+      case SPEED:
+      {
+      speed = incomingcontrol.esp_value; 
+      Stroker.setSpeed(speed, true);
+      }
+      break;
+      case DEPTH:
+      {
+      depth = incomingcontrol.esp_value;
+      Stroker.setDepth(depth, true);
+      }
+      break;
+      case STROKE:
+      {
+      stroke = incomingcontrol.esp_value;
+      Stroker.setStroke(stroke, true);
+      }
+      break;
+      case SENSATION:
+      {
+      sensation = incomingcontrol.esp_value;
+      Stroker.setSensation(sensation, true);
+      }
+      break;
+      case PATTERN:
+      {
+      int patter = incomingcontrol.esp_value;
+      Stroker.setPattern(patter, true);
+      LogDebug(Stroker.getPatternName(patter));
+      }
+      break;
+      case TORQE_F:
+      {
+        int torqe = incomingcontrol.esp_value * 10;
+        LogDebug(torqe);
+        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FE, torqe);
+        if (err!=SUCCESS) {
+        ModbusError e(err);
+        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+        }
+      }
+      break;
+      case TORQE_R:
+      {
+        int torqe = 65535 - (incomingcontrol.esp_value * -10);
+        LogDebug(torqe);
+        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FF, torqe);
+        if (err!=SUCCESS) {
+        ModbusError e(err);
+        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+        }
+      }
+      break;
+      case SETUP_D_I:
+      Stroker.setupDepth(10, false);
+      break;
+      case SETUP_D_I_F:
+      Stroker.setupDepth(10, true);
+      break;
+      case REBOOT:
+      ESP.restart();
+      break; 
+      
+    }
+    } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
+      outgoingcontrol.esp_connected = true;
+      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+      outgoingcontrol.esp_depth = MAX_STROKEINMM;
+      outgoingcontrol.esp_pattern = Stroker.getPattern();
+      outgoingcontrol.esp_target = M5_ID;
+      heartbeat = true;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      if (result == ESP_OK) {
+       m5_first_connect = true;
+       Stroker.disable();
+       Stroker.enableAndHome(&endstop, homingNotification);
+      }
+    }
+  }
+  }
+  
+}
+
 void setup() {
   Serial.begin(115200);         // Start Serial.
+  Serial2.begin(57600, SERIAL_8E1, GPIO_NUM_16, GPIO_NUM_17);
   LogDebug("\n Starting");      // Start LogDebug
   delay(200);
   
@@ -131,6 +342,17 @@ void setup() {
   FastLED.setBrightness(150);
   setLedRainbow(leds);
   FastLED.show();
+
+  MB.onDataHandler(&handleData);
+  MB.onErrorHandler(&handleError);
+  MB.setTimeout(2000);
+  MB.begin();
+  
+  Error err = MB.addRequest(Token++, 1, READ_HOLD_REGISTER, 0x01FE, 1);
+  if (err!=SUCCESS) {
+  ModbusError e(err);
+  Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+  }
 
   // OLED SETUP
   g_ui.Setup();
@@ -157,12 +379,27 @@ void setup() {
                             &CRemote_T,         /* Task handle to keep track of created task */
                             0);                 /* pin task to core 0 */
   delay(100);
+  
+  xTaskCreatePinnedToCore(espNowRemoteTask,      /* Task function. */
+                            "espNowRemoteTask",  /* name of task. */
+                            4096,               /* Stack size of task */
+                            NULL,               /* parameter of the task */
+                            5,                  /* priority of the task */
+                            &eRemote_t,         /* Task handle to keep track of created task */
+                            0);                 /* pin task to core 0 */
+  delay(100);
+  
+
   if(!g_ui.DisplayIsConnected()){
     vTaskSuspend(CRemote_T);
   }
   
+
+
   pinMode(SERVO_ALM_PIN, INPUT);
   pinMode(SERVO_PED_PIN, INPUT);
+  //ALM.attachClick(almclick);
+  //PED.attachClick(pedclick);
 
   pinMode(SPEED_POT_PIN, INPUT);
   adcAttachPin(SPEED_POT_PIN);
@@ -174,18 +411,24 @@ void setup() {
   while (Stroker.getState() != READY) {
     delay(100);
   }
+  Stroker.setSpeed(0.0, true);
+  Stroker.setDepth(0.0, true);
+  Stroker.setStroke(0.0, true);
+  Stroker.setPattern(2,true);
 }
 
 void loop() {
   g_ui.UpdateScreen();
+  //PED.tick();
+  //ALM.tick();
 }
 
 void emergencyStopTask(void *pvParameters)
 {
  for (;;)
   { 
-    bool alm = digitalRead(SERVO_ALM_PIN);
-    bool ped = digitalRead(SERVO_PED_PIN);
+    //bool alm = digitalRead(SERVO_ALM_PIN);
+    //bool ped = digitalRead(SERVO_PED_PIN);
     //LogDebugFormatted("ALM: %ld \n", static_cast<long int>(alm));
     //LogDebugFormatted("PED: %ld \n", static_cast<long int>(ped));
     static bool is_connected = false;
@@ -204,6 +447,9 @@ void emergencyStopTask(void *pvParameters)
         }
         vTaskSuspend(CRemote_T);
 
+    }
+    if(m5_first_connect == true){
+      vTaskSuspend(CRemote_T);
     }
     vTaskDelay(200);
   }
@@ -513,6 +759,42 @@ void CableRemoteTask(void *pvParameters)
    }
 }
 
+void espNowRemoteTask(void *pvParameters)
+{
+    WiFi.mode(WIFI_STA);
+    LogDebug(WiFi.macAddress());
+
+    // Init ESP-NOW
+    if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+    }
+    // Once ESPNow is successfully Init, we will register for Send CB to
+    // get the status of Trasnmitted packet
+    esp_now_register_send_cb(OnDataSent);
+
+    // Register peer
+    memcpy(peerInfo.peer_addr, Broadcast_Address, 6);
+    peerInfo.channel = 0;  
+    peerInfo.encrypt = false;
+  
+      // Add peer        
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+    Serial.println("Failed to add peer");
+    vTaskSuspend(eRemote_t);
+    return;
+    } else {
+      vTaskSuspend(CRemote_T);
+    }
+    // Register for a callback function that will be called when data is received
+    esp_now_register_recv_cb(OnDataRecv);
+
+    for(;;)
+    {
+      vTaskDelay(500);
+    }
+}
+
 float getAnalogAverage(int pinNumber, int samples)
 {
     float sum = 0;
@@ -541,4 +823,12 @@ void setLedRainbow(CRGB leds[])
         FastLED.show();
         delay(4);
     }
+}
+
+void almclick(){
+  LogDebug("ALM clicked");
+}
+
+void pedclick(){
+  LogDebug("PED clicked");
 }

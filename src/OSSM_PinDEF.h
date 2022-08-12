@@ -17,7 +17,6 @@
 
 #define SERVO_ALM_PIN        39        // Servo ALM Output
 #define SERVO_PED_PIN        36        // Servo PED Output
-
 /*
     Homing and safety pins
 */
