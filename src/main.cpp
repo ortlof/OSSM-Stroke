@@ -31,6 +31,8 @@
 #define SETUP_D_I 12
 #define SETUP_D_I_F 13
 #define REBOOT 14
+#define CONNECT 88
+#define HEARTBEAT 99
 
 OneButton ALM(SERVO_ALM_PIN, false);
 OneButton PED(SERVO_PED_PIN, false);
@@ -50,6 +52,7 @@ bool out_esp_rstate;
 bool out_esp_connected;
 int out_esp_command;
 float out_esp_value;
+int out_esp_target;
 
 float incoming_esp_speed;
 float incoming_esp_depth;
@@ -58,8 +61,10 @@ float incoming_esp_sensation;
 float incoming_esp_pattern;
 bool incoming_esp_rstate;
 bool incoming_esp_connected;
+bool incoming_esp_heartbeat;
 int incoming_esp_command;
 float incoming_esp_value;
+int incoming_esp_target;
 
 typedef struct struct_message {
   float esp_speed;
@@ -69,11 +74,15 @@ typedef struct struct_message {
   float esp_pattern;
   bool esp_rstate;
   bool esp_connected;
+  bool esp_heartbeat;
   int esp_command;
   float esp_value;
+  int esp_target;
 } struct_message;
 
-bool esp_connect = false;
+bool m5_first_connect = false;
+bool heartbeat = false;
+bool m5_remotelost = false;
 
 struct_message outgoingcontrol;
 struct_message incomingcontrol;
@@ -179,6 +188,9 @@ void pedclick();
 float getAnalogAverage(int pinNumber, int samples);
 
 
+unsigned long Heartbeat_Time = 0;
+const long Heartbeat_Interval = 15000;
+
 // Homing Feedback Serial
 void homingNotification(bool isHomed) {
   if (isHomed) {
@@ -207,71 +219,59 @@ void handleError(Error error, uint32_t token){
 
 // Callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-  if (status ==0){
-    success = "Delivery Success :)";
-  }
-  else{
-    success = "Delivery Fail :(";
-  }
 }
 
 // Callback when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&incomingcontrol, incomingData, sizeof(incomingcontrol));
-  if(esp_connect == false && incomingcontrol.esp_connected == false){
-    switch(incomingcontrol.esp_command)
+  switch(incomingcontrol.esp_target)
+  {
+    case OSSM_ID:
     {
-      case REBOOT:
-      ESP.restart();
-      break; 
-    }
-    outgoingcontrol.esp_connected = true;
-    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-    outgoingcontrol.esp_depth = MAX_STROKEINMM;
-    outgoingcontrol.esp_pattern = Stroker.getPattern();
-    esp_err_t result = esp_now_send(Remote_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-    if (result == ESP_OK) {
-      esp_connect = true;
-    }
-  } else if(esp_connect == true && incomingcontrol.esp_connected == false){
-    Stroker.disable();
-    Stroker.enableAndHome(&endstop, homingNotification);
-    outgoingcontrol.esp_connected = true;
-    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-    outgoingcontrol.esp_depth = MAX_STROKEINMM;
-    outgoingcontrol.esp_pattern = Stroker.getPattern();
-    esp_err_t result = esp_now_send(Remote_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-    if (result == ESP_OK) {
-      esp_connect = true;
-    }
-  } else if(esp_connect == true && incomingcontrol.esp_connected == true){
+    if(m5_first_connect == true && m5_remotelost == false){
     LogDebug(incomingcontrol.esp_command);
     LogDebug(incomingcontrol.esp_value);
     switch(incomingcontrol.esp_command)
     {
       case ON:
+      {
+      LogDebug("ON Got");
       Stroker.startPattern();
+      outgoingcontrol.esp_command = ON;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      }
       break;
       case OFF:
+      {
+      LogDebug("OFF Got");
       Stroker.stopMotion();
+      outgoingcontrol.esp_command = OFF;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      }
       break;
       case SPEED:
+      {
       speed = incomingcontrol.esp_value; 
       Stroker.setSpeed(speed, true);
+      }
       break;
       case DEPTH:
+      {
       depth = incomingcontrol.esp_value;
       Stroker.setDepth(depth, true);
+      }
       break;
       case STROKE:
+      {
       stroke = incomingcontrol.esp_value;
       Stroker.setStroke(stroke, true);
+      }
       break;
       case SENSATION:
+      {
       sensation = incomingcontrol.esp_value;
       Stroker.setSensation(sensation, true);
+      }
       break;
       case PATTERN:
       {
@@ -310,9 +310,26 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       break;
       case REBOOT:
       ESP.restart();
-      break;     
+      break; 
+      
+    }
+    } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
+      outgoingcontrol.esp_connected = true;
+      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+      outgoingcontrol.esp_depth = MAX_STROKEINMM;
+      outgoingcontrol.esp_pattern = Stroker.getPattern();
+      outgoingcontrol.esp_target = M5_ID;
+      heartbeat = true;
+      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      if (result == ESP_OK) {
+       m5_first_connect = true;
+       Stroker.disable();
+       Stroker.enableAndHome(&endstop, homingNotification);
+      }
     }
   }
+  }
+  
 }
 
 void setup() {
@@ -397,6 +414,7 @@ void setup() {
   Stroker.setSpeed(0.0, true);
   Stroker.setDepth(0.0, true);
   Stroker.setStroke(0.0, true);
+  Stroker.setPattern(2,true);
 }
 
 void loop() {
@@ -430,7 +448,7 @@ void emergencyStopTask(void *pvParameters)
         vTaskSuspend(CRemote_T);
 
     }
-    if(esp_connect == true){
+    if(m5_first_connect == true){
       vTaskSuspend(CRemote_T);
     }
     vTaskDelay(200);
@@ -756,7 +774,7 @@ void espNowRemoteTask(void *pvParameters)
     esp_now_register_send_cb(OnDataSent);
 
     // Register peer
-    memcpy(peerInfo.peer_addr, Remote_Address, 6);
+    memcpy(peerInfo.peer_addr, Broadcast_Address, 6);
     peerInfo.channel = 0;  
     peerInfo.encrypt = false;
   
