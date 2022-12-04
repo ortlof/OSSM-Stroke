@@ -204,6 +204,14 @@ void homingNotification(bool isHomed) {
   if (isHomed) {
     LogDebug("Found home - Ready to rumble!");
     g_ui.UpdateMessage("Homed - Ready to rumble!");
+
+    outgoingcontrol.esp_connected = true;
+    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+    outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
+    outgoingcontrol.esp_pattern = Stroker.getPattern();
+    outgoingcontrol.esp_target = M5_ID;
+    heartbeat = true;
+    esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
   } else {
     g_ui.UpdateMessage("Homing failed!");
     LogDebug("Homing failed!");
@@ -322,14 +330,6 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       
     }
     } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
-      outgoingcontrol.esp_connected = true;
-      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-      outgoingcontrol.esp_depth = MAX_STROKEINMM;
-      outgoingcontrol.esp_pattern = Stroker.getPattern();
-      outgoingcontrol.esp_target = M5_ID;
-      heartbeat = true;
-      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-      if (result == ESP_OK) {
         m5_first_connect = true;
         Serial.printf("Got M5 connection, restarting homeing\n");
         Stroker.disable();
@@ -341,7 +341,6 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
         {
           Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
         }
-      }
     }
   }
   }
@@ -570,7 +569,7 @@ void CableRemoteTask(void *pvParameters)
           state = OPT_SET_DEPTH;
           g_ui.UpdateMessage("->Set Depth<-");
           depth = Stroker.getDepth();
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateTitelR("Depth");
           break;
           }
@@ -595,15 +594,15 @@ void CableRemoteTask(void *pvParameters)
           }
 
           if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, false);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, false);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
@@ -614,7 +613,7 @@ void CableRemoteTask(void *pvParameters)
           state = OPT_SET_STROKE;
           g_ui.UpdateMessage("->Set Stroke<-");
           stroke = Stroker.getStroke();
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateTitelR("Stroke");
           break;
           }
@@ -639,15 +638,15 @@ void CableRemoteTask(void *pvParameters)
           }
 
           if (encoder->wasTurnedLeft()) {
-          stroke = constrain((stroke - STROKE_RESULTION) , 0, MAX_STROKEINMM);
+          stroke = constrain((stroke - STROKE_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setStroke(stroke, false);
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           LogDebug(stroke);
           break;
           } else if (encoder->wasTurnedRight()) {
-          stroke = constrain((stroke + STROKE_RESULTION) , 0, MAX_STROKEINMM);
+          stroke = constrain((stroke + STROKE_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setStroke(stroke, false);
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           LogDebug(stroke);
           break;
           }
@@ -699,7 +698,7 @@ void CableRemoteTask(void *pvParameters)
           Stroker.setupDepth(10.0, false);
           depth = Stroker.getDepth();
           g_ui.UpdateTitelR("Depth");
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateMessage("->Inter. Depth<-");
           break;
           }
@@ -723,15 +722,15 @@ void CableRemoteTask(void *pvParameters)
           break;
           }
          if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
@@ -744,7 +743,7 @@ void CableRemoteTask(void *pvParameters)
           Stroker.setupDepth(10.0, true);
           depth = Stroker.getDepth();
           g_ui.UpdateTitelR("Depth");
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           break;
           }
           if (encoder->wasTurnedLeft()) {
@@ -767,15 +766,15 @@ void CableRemoteTask(void *pvParameters)
           break;
           }
           if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
