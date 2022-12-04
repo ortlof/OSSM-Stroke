@@ -9,6 +9,8 @@ uint8_t Broadcast_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint8_t Remote_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 //uint8_t Remote_Address[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
 
+#define EEPROM_SIZE 200
+
 #define OSSM_ID  1 //OSSM_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
 #define M5_ID 99 //M5_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
 

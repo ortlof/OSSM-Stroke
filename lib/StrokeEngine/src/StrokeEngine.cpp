@@ -352,6 +352,7 @@ void StrokeEngine::enableAndHome(endstopProperties *endstop, void(*callBackHomin
 
 void StrokeEngine::enableAndHome(endstopProperties *endstop, float speed) {
     // set homing pin as input
+    _sensorlessHomeing = false;
     _homeingPin = endstop->endstopPin;
     pinMode(_homeingPin, endstop->pinMode);
     _homeingActiveLow = endstop->activeLow;
@@ -382,6 +383,40 @@ void StrokeEngine::enableAndHome(endstopProperties *endstop, float speed) {
     ); 
 #ifdef DEBUG_TALKATIVE
     Serial.println("Homing task started");
+#endif
+
+}
+
+void StrokeEngine::enableAndSensorlessHome(sensorlessHomeProperties *sensorless, void(*callBackHoming)(bool), float speed) {
+    // Store callback
+    _callBackHomeing = callBackHoming;
+
+    // enable and sensorless home
+    enableAndSensorlessHome(sensorless, speed);
+}
+
+void StrokeEngine::enableAndSensorlessHome(sensorlessHomeProperties *sensorless, float speed) {
+    _sensorlessHomeing = true;
+    _homeingSpeed = speed * _motor->stepsPerMillimeter;
+    _sensorlessHomeingCurrentPin = sensorless->currentPin;
+    pinMode(_sensorlessHomeingCurrentPin, INPUT);
+    _sensorlessHomeingCurrentLimit = sensorless->currentLimit;
+
+    // first stop current motion and delete stroke task
+    stopMotion();
+
+    // Create homing task
+    xTaskCreatePinnedToCore(
+        this->_homingProcedureImpl,     // Function that should be called
+        "SensorlessHoming",             // Name of the task (for debugging)
+        2048,                           // Stack size (bytes)
+        this,                           // Pass reference to this class instance
+        20,                             // Pretty high task priority
+        &_taskHomingHandle,             // Task handle
+        1                               // Have it on application core
+    ); 
+#ifdef DEBUG_TALKATIVE
+    Serial.println("Sensorless homing task started");
 #endif
 
 }
@@ -529,17 +564,18 @@ ServoState StrokeEngine::getState() {
 }
 
 void StrokeEngine::disable() {
+    // Delete homing Task
+    _abortHoming = true;
+    while (_taskHomingHandle != NULL) {
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    }
+    _abortHoming = false;
+
     _state = UNDEFINED;
     _isHomed = false;
 
     // Disable servo motor
     servo->disableOutputs();
-
-    // Delete homing Task
-    if (_taskHomingHandle != NULL) {
-        vTaskDelete(_taskHomingHandle);
-        _taskHomingHandle = NULL;
-    }
 
 #ifdef DEBUG_TALKATIVE
     Serial.println("Servo disabled. Call home to continue.");
@@ -590,7 +626,140 @@ void StrokeEngine::registerTelemetryCallback(void(*callbackTelemetry)(float, flo
     _callbackTelemetry = callbackTelemetry;
 }
 
+float StrokeEngine::_getAnalogAveragePercent(int pinNumber, int samples) {
+    float sum = 0;
+    float average = 0;
+    float percentage = 0;
+    for (int i = 0; i < samples; i++)
+    {
+        // TODO: Possibly use fancier filters?
+        sum += analogRead(pinNumber);
+    }
+    average = sum / samples;
+    // TODO: Might want to add a deadband
+    percentage = 100.0 * average / 4096.0; // 12 bit resolution
+    return percentage;
+}
+
 void StrokeEngine::_homingProcedure() {
+    if(_sensorlessHomeing) {
+        _sensorlessHomingProcedure();
+    } else {
+        _sensorHomingProcedure();
+    }
+
+    _taskHomingHandle = NULL;
+    vTaskDelete(NULL);
+}
+
+void StrokeEngine::_sensorlessHomingProcedure() {
+#ifdef DEBUG_TALKATIVE
+    Serial.println("Finding Home Sensorless");
+#endif
+    float currentSensorOffset = (_getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 1000));
+    float current = _getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 200) - currentSensorOffset;
+    long lastMillisMessage = 0;
+
+    // Set feedrate for homing
+    servo->setSpeedInHz(_homeingSpeed);
+    servo->setAcceleration(_maxStepAcceleration / 10);
+
+    // disable motor briefly in case we are against a hard stop.
+    servo->disableOutputs();
+    vTaskDelay(600 / portTICK_PERIOD_MS);
+    if(_abortHoming) return;
+    servo->enableOutputs();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    if(_abortHoming) return;
+
+#ifdef DEBUG_TALKATIVE
+    Serial.print(_getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 500) - currentSensorOffset);
+    Serial.print(",");
+    Serial.println(servo->getCurrentPosition() / _motor->stepsPerMillimeter);
+
+    Serial.println("Sensorless homing move");
+#endif
+    servo->runForward();
+
+    current = _getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 200) - currentSensorOffset;
+    while (current < _sensorlessHomeingCurrentLimit)
+    {
+        if(_abortHoming) return;
+        current = _getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 25) - currentSensorOffset;
+#ifdef DEBUG_TALKATIVE
+        if(millis() - lastMillisMessage > 200) {
+            Serial.print(current);
+            Serial.print(",");
+            Serial.println(servo->getCurrentPosition());
+            lastMillisMessage = millis();
+        }
+#endif
+
+        // Let other tasks run
+        vTaskDelay(0);
+    }
+
+    servo->forceStopAndNewPosition(0);
+#ifdef DEBUG_TALKATIVE
+    Serial.println("Sensorless found max");
+#endif
+
+    servo->runBackward();
+
+    vTaskDelay(300 / portTICK_PERIOD_MS);
+
+    current = _getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 200) - currentSensorOffset;
+    while (current < _sensorlessHomeingCurrentLimit)
+    {
+        if(_abortHoming) return;
+        current = _getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 25) - currentSensorOffset;
+#ifdef DEBUG_TALKATIVE
+        if(millis() - lastMillisMessage > 200) {
+            Serial.print(current);
+            Serial.print(",");
+            Serial.println(servo->getCurrentPosition());
+            lastMillisMessage = millis();
+        }
+#endif
+        // Let other tasks run
+        vTaskDelay(0);
+    }
+
+    if(_abortHoming) return;
+
+    _physics->physicalTravel = abs(servo->getCurrentPosition()) / _motor->stepsPerMillimeter;
+    _travel = (_physics->physicalTravel - (2 * _physics->keepoutBoundary));
+    servo->forceStopAndNewPosition(-_motor->stepsPerMillimeter * _physics->keepoutBoundary);
+    
+#ifdef DEBUG_TALKATIVE
+    Serial.printf("Found rail length: %f\n", _physics->physicalTravel);
+#endif
+
+    servo->moveTo(0);
+
+    _isHomed = true;
+    _state = READY;
+
+#ifdef DEBUG_TALKATIVE
+        Serial.println("Homing succeeded");
+#endif
+
+    // Call notification callback, if it was defined.
+    if (_callBackHomeing != NULL) {
+        _callBackHomeing(_isHomed);
+    }
+
+    // Set first point for telemetry
+    if (_callbackTelemetry != NULL) {
+        _callbackTelemetry(0.0, 0.0, false);
+    }
+
+#ifdef DEBUG_TALKATIVE
+    Serial.println("Stroke Engine State: " + verboseState[_state]);
+#endif
+}
+
+void StrokeEngine::_sensorHomingProcedure() {
     // Set feedrate for homing
     servo->setSpeedInHz(_homeingSpeed);       
     servo->setAcceleration(_maxStepAcceleration / 10);    
@@ -602,6 +771,7 @@ void StrokeEngine::_homingProcedure() {
 
         // wait for move to complete
         while (servo->isRunning()) {
+            if(_abortHoming) return;
             // Pause the task for 100ms while waiting for move to complete
             vTaskDelay(100 / portTICK_PERIOD_MS);
         }
@@ -616,7 +786,7 @@ void StrokeEngine::_homingProcedure() {
 
     // Poll homing switch
     while (servo->isRunning()) {
-
+        if(_abortHoming) return;
         // Switch is active low
         if (digitalRead(_homeingPin) == !_homeingActiveLow) {
 
@@ -678,10 +848,6 @@ void StrokeEngine::_homingProcedure() {
 #ifdef DEBUG_TALKATIVE
     Serial.println("Stroke Engine State: " + verboseState[_state]);
 #endif
-
-    // delete one-time task
-    _taskHomingHandle = NULL;
-    vTaskDelete(NULL);
 }
 
 void StrokeEngine::_stroking() {

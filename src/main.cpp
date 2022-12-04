@@ -1,4 +1,5 @@
 #include <Arduino.h>          // Basic Needs
+#include <EEPROM.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <StrokeEngine.h>     // Include Stroke Engine
@@ -36,6 +37,8 @@
 
 OneButton ALM(SERVO_ALM_PIN, false);
 OneButton PED(SERVO_PED_PIN, false);
+
+int hardwareVersion = 10; // V2.7 = integer value 27
 
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
@@ -141,6 +144,11 @@ static endstopProperties endstop = {
   .activeLow = true,                  // switch is wired active low
   .endstopPin = SERVO_ENDSTOP,        // Pin number
   .pinMode = INPUT_PULLUP             // pinmode INPUT with external pull-up resistor
+};
+
+static sensorlessHomeProperties sensorless = {
+  .currentPin = 36,
+  .currentLimit = 1.5f
 };
 
 StrokeEngine Stroker;
@@ -322,14 +330,28 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       heartbeat = true;
       esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
       if (result == ESP_OK) {
-       m5_first_connect = true;
-       Stroker.disable();
-       Stroker.enableAndHome(&endstop, homingNotification);
+        m5_first_connect = true;
+        Serial.printf("Got M5 connection, restarting homeing\n");
+        Stroker.disable();
+        if (hardwareVersion >= 20)
+        {
+          Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+        }
+        else
+        {
+          Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+        }
       }
     }
   }
   }
   
+}
+
+void readEepromSettings() {
+  LogDebug("read eeprom");
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.get(0, hardwareVersion);
 }
 
 void setup() {
@@ -358,17 +380,37 @@ void setup() {
   g_ui.Setup();
   g_ui.UpdateOnly();
 
-  Stroker.begin(&strokingMachine, &servoMotor);     // Setup Stroke Engine
-  Stroker.enableAndHome(&endstop, homingNotification);    // pointer to the homing config struct
+  readEepromSettings();
 
-  //Start Tasks here:
-  xTaskCreatePinnedToCore(emergencyStopTask,     /* Task function. */
-                            "emergencyStopTask", /* name of task. */
-                            2048,                /* Stack size of task */
-                            NULL,                /* parameter of the task */
-                            1,                   /* priority of the task */
-                            &estop_T,            /* Task handle to keep track of created task */
-                            0);                  /* pin task to core 0 */
+  pinMode(SERVO_ALM_PIN, INPUT);
+  pinMode(SERVO_PED_PIN, INPUT);
+  // ALM.attachClick(almclick);
+  // PED.attachClick(pedclick);
+
+  pinMode(SPEED_POT_PIN, INPUT);
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db); // allows us to read almost full 3.3V range
+
+  Serial.printf("useSensorlessHoming: %s\n", hardwareVersion >= 20 ? "yes" : "no");
+
+  Stroker.begin(&strokingMachine, &servoMotor); // Setup Stroke Engine
+  if (hardwareVersion >= 20)
+  {
+    Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+  }
+  else
+  {
+    Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+  }
+
+  // Start Tasks here:
+  xTaskCreatePinnedToCore(emergencyStopTask,   /* Task function. */
+                          "emergencyStopTask", /* name of task. */
+                          2048,                /* Stack size of task */
+                          NULL,                /* parameter of the task */
+                          1,                   /* priority of the task */
+                          &estop_T,            /* Task handle to keep track of created task */
+                          0);                  /* pin task to core 0 */
   delay(100);
 
   xTaskCreatePinnedToCore(CableRemoteTask,      /* Task function. */
@@ -396,17 +438,8 @@ void setup() {
   
 
 
-  pinMode(SERVO_ALM_PIN, INPUT);
-  pinMode(SERVO_PED_PIN, INPUT);
-  //ALM.attachClick(almclick);
-  //PED.attachClick(pedclick);
-
-  pinMode(SPEED_POT_PIN, INPUT);
   adcAttachPin(SPEED_POT_PIN);
 
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db); // allows us to read almost full 3.3V range
-  
   // wait for homing to complete
   while (Stroker.getState() != READY) {
     delay(100);
@@ -804,6 +837,7 @@ float getAnalogAverage(int pinNumber, int samples)
     {
         // TODO: Possibly use fancier filters?
         sum += analogRead(pinNumber);
+        vTaskDelay(0);
     }
     average = sum / samples;
     // TODO: Might want to add a deadband
