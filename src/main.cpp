@@ -1,4 +1,5 @@
 #include <Arduino.h>          // Basic Needs
+#include <EEPROM.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <StrokeEngine.h>     // Include Stroke Engine
@@ -36,6 +37,8 @@
 
 OneButton ALM(SERVO_ALM_PIN, false);
 OneButton PED(SERVO_PED_PIN, false);
+
+int hardwareVersion = 10; // V2.7 = integer value 27
 
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
@@ -143,6 +146,11 @@ static endstopProperties endstop = {
   .pinMode = INPUT_PULLUP             // pinmode INPUT with external pull-up resistor
 };
 
+static sensorlessHomeProperties sensorless = {
+  .currentPin = 36,
+  .currentLimit = 1.5f
+};
+
 StrokeEngine Stroker;
 
 ///////////////////////////////////////////
@@ -196,6 +204,14 @@ void homingNotification(bool isHomed) {
   if (isHomed) {
     LogDebug("Found home - Ready to rumble!");
     g_ui.UpdateMessage("Homed - Ready to rumble!");
+
+    outgoingcontrol.esp_connected = true;
+    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+    outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
+    outgoingcontrol.esp_pattern = Stroker.getPattern();
+    outgoingcontrol.esp_target = M5_ID;
+    heartbeat = true;
+    esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
   } else {
     g_ui.UpdateMessage("Homing failed!");
     LogDebug("Homing failed!");
@@ -314,22 +330,27 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       
     }
     } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
-      outgoingcontrol.esp_connected = true;
-      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-      outgoingcontrol.esp_depth = MAX_STROKEINMM;
-      outgoingcontrol.esp_pattern = Stroker.getPattern();
-      outgoingcontrol.esp_target = M5_ID;
-      heartbeat = true;
-      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-      if (result == ESP_OK) {
-       m5_first_connect = true;
-       Stroker.disable();
-       Stroker.enableAndHome(&endstop, homingNotification);
-      }
+        m5_first_connect = true;
+        Serial.printf("Got M5 connection, restarting homeing\n");
+        Stroker.disable();
+        if (hardwareVersion >= 20)
+        {
+          Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+        }
+        else
+        {
+          Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+        }
     }
   }
   }
   
+}
+
+void readEepromSettings() {
+  LogDebug("read eeprom");
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.get(0, hardwareVersion);
 }
 
 void setup() {
@@ -358,17 +379,37 @@ void setup() {
   g_ui.Setup();
   g_ui.UpdateOnly();
 
-  Stroker.begin(&strokingMachine, &servoMotor);     // Setup Stroke Engine
-  Stroker.enableAndHome(&endstop, homingNotification);    // pointer to the homing config struct
+  readEepromSettings();
 
-  //Start Tasks here:
-  xTaskCreatePinnedToCore(emergencyStopTask,     /* Task function. */
-                            "emergencyStopTask", /* name of task. */
-                            2048,                /* Stack size of task */
-                            NULL,                /* parameter of the task */
-                            1,                   /* priority of the task */
-                            &estop_T,            /* Task handle to keep track of created task */
-                            0);                  /* pin task to core 0 */
+  pinMode(SERVO_ALM_PIN, INPUT);
+  pinMode(SERVO_PED_PIN, INPUT);
+  // ALM.attachClick(almclick);
+  // PED.attachClick(pedclick);
+
+  pinMode(SPEED_POT_PIN, INPUT);
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db); // allows us to read almost full 3.3V range
+
+  Serial.printf("useSensorlessHoming: %s\n", hardwareVersion >= 20 ? "yes" : "no");
+
+  Stroker.begin(&strokingMachine, &servoMotor); // Setup Stroke Engine
+  if (hardwareVersion >= 20)
+  {
+    Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+  }
+  else
+  {
+    Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+  }
+
+  // Start Tasks here:
+  xTaskCreatePinnedToCore(emergencyStopTask,   /* Task function. */
+                          "emergencyStopTask", /* name of task. */
+                          2048,                /* Stack size of task */
+                          NULL,                /* parameter of the task */
+                          1,                   /* priority of the task */
+                          &estop_T,            /* Task handle to keep track of created task */
+                          0);                  /* pin task to core 0 */
   delay(100);
 
   xTaskCreatePinnedToCore(CableRemoteTask,      /* Task function. */
@@ -396,17 +437,8 @@ void setup() {
   
 
 
-  pinMode(SERVO_ALM_PIN, INPUT);
-  pinMode(SERVO_PED_PIN, INPUT);
-  //ALM.attachClick(almclick);
-  //PED.attachClick(pedclick);
-
-  pinMode(SPEED_POT_PIN, INPUT);
   adcAttachPin(SPEED_POT_PIN);
 
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db); // allows us to read almost full 3.3V range
-  
   // wait for homing to complete
   while (Stroker.getState() != READY) {
     delay(100);
@@ -537,7 +569,7 @@ void CableRemoteTask(void *pvParameters)
           state = OPT_SET_DEPTH;
           g_ui.UpdateMessage("->Set Depth<-");
           depth = Stroker.getDepth();
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateTitelR("Depth");
           break;
           }
@@ -562,15 +594,15 @@ void CableRemoteTask(void *pvParameters)
           }
 
           if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, false);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, false);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
@@ -581,7 +613,7 @@ void CableRemoteTask(void *pvParameters)
           state = OPT_SET_STROKE;
           g_ui.UpdateMessage("->Set Stroke<-");
           stroke = Stroker.getStroke();
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateTitelR("Stroke");
           break;
           }
@@ -606,15 +638,15 @@ void CableRemoteTask(void *pvParameters)
           }
 
           if (encoder->wasTurnedLeft()) {
-          stroke = constrain((stroke - STROKE_RESULTION) , 0, MAX_STROKEINMM);
+          stroke = constrain((stroke - STROKE_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setStroke(stroke, false);
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           LogDebug(stroke);
           break;
           } else if (encoder->wasTurnedRight()) {
-          stroke = constrain((stroke + STROKE_RESULTION) , 0, MAX_STROKEINMM);
+          stroke = constrain((stroke + STROKE_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setStroke(stroke, false);
-          g_ui.UpdateStateR(map(stroke,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(stroke,0,strokingMachine.physicalTravel,0,100));
           LogDebug(stroke);
           break;
           }
@@ -666,7 +698,7 @@ void CableRemoteTask(void *pvParameters)
           Stroker.setupDepth(10.0, false);
           depth = Stroker.getDepth();
           g_ui.UpdateTitelR("Depth");
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           g_ui.UpdateMessage("->Inter. Depth<-");
           break;
           }
@@ -690,15 +722,15 @@ void CableRemoteTask(void *pvParameters)
           break;
           }
          if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
@@ -711,7 +743,7 @@ void CableRemoteTask(void *pvParameters)
           Stroker.setupDepth(10.0, true);
           depth = Stroker.getDepth();
           g_ui.UpdateTitelR("Depth");
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           break;
           }
           if (encoder->wasTurnedLeft()) {
@@ -734,15 +766,15 @@ void CableRemoteTask(void *pvParameters)
           break;
           }
           if (encoder->wasTurnedLeft()) {
-          depth = constrain((depth - DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth - DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           } else if (encoder->wasTurnedRight()) {
-          depth = constrain((depth + DEPTH_RESULTION) , 0, MAX_STROKEINMM);
+          depth = constrain((depth + DEPTH_RESULTION) , 0, strokingMachine.physicalTravel);
           Stroker.setDepth(depth, true);
-          g_ui.UpdateStateR(map(depth,0,MAX_STROKEINMM,0,100));
+          g_ui.UpdateStateR(map(depth,0,strokingMachine.physicalTravel,0,100));
           LogDebug(depth);
           break;
           }
@@ -804,6 +836,7 @@ float getAnalogAverage(int pinNumber, int samples)
     {
         // TODO: Possibly use fancier filters?
         sum += analogRead(pinNumber);
+        vTaskDelay(0);
     }
     average = sum / samples;
     // TODO: Might want to add a deadband

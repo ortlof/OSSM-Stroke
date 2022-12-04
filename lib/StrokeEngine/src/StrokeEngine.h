@@ -68,6 +68,11 @@ typedef struct {
   uint8_t pinMode;            /*> Pinmode of the switch INPUT, INPUT_PULLUP, INPUT_PULLDOWN */
 } endstopProperties;
 
+typedef struct {
+  int currentPin; /*> Pin connected to current sensor */
+  float currentLimit; /*> Current limit */
+} sensorlessHomeProperties;
+
 /**************************************************************************/
 /*!
   @brief  Enum containing the states of the state machine
@@ -246,6 +251,9 @@ class StrokeEngine {
         void enableAndHome(endstopProperties *endstop, float speed = 5.0);
         void enableAndHome(endstopProperties *endstop, void(*callBackHoming)(bool), float speed = 5.0);
 
+        void enableAndSensorlessHome(sensorlessHomeProperties *sensorless, float speed = 5.0);
+        void enableAndSensorlessHome(sensorlessHomeProperties *sensorless, void(*callBackHoming)(bool), float speed = 5.0);
+
         /**************************************************************************/
         /*!
           @brief  If no homing switch is present homing can be done manually. Push 
@@ -401,8 +409,11 @@ class StrokeEngine {
         float _timeOfStroke;
         float _sensation;
         bool _applyUpdate = false;
+        bool _abortHoming = false;
         static void _homingProcedureImpl(void* _this) { static_cast<StrokeEngine*>(_this)->_homingProcedure(); }
         void _homingProcedure();
+        void _sensorHomingProcedure();
+        void _sensorlessHomingProcedure();
         static void _strokingImpl(void* _this) { static_cast<StrokeEngine*>(_this)->_stroking(); }
         void _stroking();
         static void _streamingImpl(void* _this) { static_cast<StrokeEngine*>(_this)->_streaming(); }
@@ -414,10 +425,14 @@ class StrokeEngine {
         void _applyMotionProfile(motionParameter* motion);
         void(*_callBackHomeing)(bool) = NULL;
         void(*_callbackTelemetry)(float, float, bool) = NULL;
+        bool _sensorlessHomeing;
         int _homeingSpeed;
         int _homeingPin;
+        int _sensorlessHomeingCurrentPin;
+        float _sensorlessHomeingCurrentLimit;
         int _homeingToBack;
         bool _homeingActiveLow;      /*> Polarity of the homing signal*/
         bool _fancyAdjustment;
         void _setupDepths();
+        float _getAnalogAveragePercent(int pinNumber, int samples);
 };
