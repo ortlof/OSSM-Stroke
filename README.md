@@ -5,6 +5,10 @@ Integration of theelims StrokeEngine https://github.com/theelims/StrokeEngine
 
 Flash with Platform IO. 
 
+Set your Servo to or it will not work:
+
+!!! S1 OF S2 ON S3 ON S4 OFF S5 ON S6 ON !!!
+
 First Version Local Control with Remote & M5 Remote. 
 For Code and Hardware for the M5 Remote itself look here: https://github.com/ortlof/OSSM-M5-Remote
 
