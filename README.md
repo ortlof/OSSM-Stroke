@@ -3,7 +3,7 @@
 M5 Codebase for OSSM use With M5 Remote.
 Integration of theelims StrokeEngine https://github.com/theelims/StrokeEngine
 
-Flash with Platform IO. 
+Flash with Platform IO or Download Release and Flash with https://github.com/esphome/esphome-flasher/releases
 
 Set your Servo to or it will not work:
 
