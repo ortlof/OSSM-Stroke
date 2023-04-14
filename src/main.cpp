@@ -38,7 +38,7 @@
 OneButton ALM(SERVO_ALM_PIN, false);
 OneButton PED(SERVO_PED_PIN, false);
 
-int hardwareVersion = 10; // V2.7 = integer value 27
+int hardwareVersion = HW_VERSION; 
 
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
@@ -347,6 +347,19 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   
 }
 
+void writeEepromSettings()
+{
+    // Be very careful with this so you don't break your configuration!
+    LogDebug("write eeprom");
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.put(0, HW_VERSION);
+    EEPROM.put(4, 0);
+    EEPROM.put(12, 0);
+    EEPROM.put(20, 0);
+    EEPROM.commit();
+    LogDebug("eeprom written");
+}
+
 void readEepromSettings() {
   LogDebug("read eeprom");
   EEPROM.begin(EEPROM_SIZE);
@@ -379,6 +392,10 @@ void setup() {
   g_ui.Setup();
   g_ui.UpdateOnly();
 
+  #ifdef INITIAL_SETUP
+    writeEepromSettings();
+  #endif
+  
   readEepromSettings();
 
   pinMode(SERVO_ALM_PIN, INPUT);

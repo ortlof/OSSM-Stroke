@@ -10,6 +10,9 @@ uint8_t Remote_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 //uint8_t Remote_Address[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
 
 #define EEPROM_SIZE 200
+#define HW_VERSION 22 //divide by 10 for real hw version
+
+#define INITIAL_SETUP //should only be defined at initial burn to configure HW version
 
 #define OSSM_ID  1 //OSSM_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
 #define M5_ID 99 //M5_ID Default can be changed with M5 Remote in the Future will be Saved in EPROOM
