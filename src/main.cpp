@@ -14,6 +14,24 @@
 #include "OneButton.h"
 
 
+///////////////////////////////////////////
+////
+////  OTA update or not OTA update
+///////////////////////////////////////////
+
+#define OTA_UPDATE // Comment this line out if you don't want OTA updates
+
+#ifdef OTA_UPDATE
+#include "arduino_secrets.h"
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+#include <rom/rtc.h>
+
+const char* ssid = SSID; // Add your SSID in arduino_secrets.h
+const char* password = PASSWORD; // Add your password in arduino_secrets.h
+#endif
+
 #define BTN_NONE   0
 #define BTN_SHORT  1
 #define BTN_LONG   2
@@ -32,6 +50,7 @@
 #define SETUP_D_I 12
 #define SETUP_D_I_F 13
 #define REBOOT 14
+#define OTA 15 // Need to Uncomment OTA_UPDATE below if you want to use this
 #define CONNECT 88
 #define HEARTBEAT 99
 
@@ -328,6 +347,15 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       ESP.restart();
       break; 
       
+      #ifdef OTA_UPDATE
+      case OTA:
+      {
+        // Use a deepsleep reset to check upon boot the reset reason and activate OTA if needed.
+        esp_sleep_enable_timer_wakeup(500000);
+        esp_deep_sleep_start();
+        break;
+      }
+      #endif
     }
     } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
         m5_first_connect = true;
@@ -370,8 +398,35 @@ void setup() {
   Serial.begin(115200);         // Start Serial.
   Serial2.begin(57600, SERIAL_8E1, GPIO_NUM_16, GPIO_NUM_17);
   LogDebug("\n Starting");      // Start LogDebug
-  delay(200);
-  
+
+  #ifdef OTA_UPDATE
+  // Check the reset reason
+  if(rtc_get_reset_reason(0) ==  DEEPSLEEP_RESET){
+
+    Serial.println("Connecting to WiFi for OTA update...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+
+    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+      Serial.println("Connection to WiFi failed: OTA update unavailable.");
+      Serial.println("Rebooting in normal mode...");
+      delay(1000);
+      ESP.restart();
+    }
+
+    ArduinoOTA.begin();
+
+    Serial.println("Arduino OTA Ready");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    
+    while(true){
+      ArduinoOTA.handle();
+      delay(100);
+    }
+  }
+  #endif
+
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(150);
   setLedRainbow(leds);
