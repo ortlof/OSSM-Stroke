@@ -13,7 +13,6 @@
 #include "ModbusClientRTU.h"
 #include "OneButton.h"
 
-
 ///////////////////////////////////////////
 ////
 ////  OTA update or not OTA update
@@ -50,7 +49,7 @@ const char* password = PASSWORD; // Add your password in arduino_secrets.h
 #define SETUP_D_I 12
 #define SETUP_D_I_F 13
 #define REBOOT 14
-#define OTA 15 // Need to Uncomment OTA_UPDATE below if you want to use this
+#define OTA 15 // Need to Uncomment #define OTA_UPDATE if you want to use this command
 #define CONNECT 88
 #define HEARTBEAT 99
 
@@ -87,7 +86,6 @@ bool incoming_esp_heartbeat;
 int incoming_esp_command;
 float incoming_esp_value;
 int incoming_esp_target;
-
 typedef struct struct_message {
   float esp_speed;
   float esp_depth;
@@ -102,17 +100,19 @@ typedef struct struct_message {
   int esp_target;
 } struct_message;
 
-bool m5_first_connect = false;
-bool heartbeat = false;
+esp_now_peer_info_t peerInfo;
+uint8_t m5RemoteAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // Broadcast to all ESP32s, upon connection gets updated to the actual address
+bool m5_paired = false;
 bool m5_remotelost = false;
+
+#define HEARTBEAT_INTERVAL 10000/portTICK_PERIOD_MS	// 10 seconds
+volatile TickType_t lastHeartbeatTime = 0;
 
 struct_message outgoingcontrol;
 struct_message incomingcontrol;
 
-esp_now_peer_info_t peerInfo;
 ModbusClientRTU MB(Serial2);
 uint32_t Token = 1111;
-
 
 ///////////////////////////////////////////
 ////
@@ -138,7 +138,6 @@ uint8_t state = START;
 
 // Display LocaL Remote
 OssmUi g_ui(REMOTE_ADDRESS, REMOTE_SDA, REMOTE_CLK);
-
 
 static motorProperties servoMotor {
   .maxSpeed = MAX_SPEED,                // Maximum speed the system can go in mm/s
@@ -214,10 +213,6 @@ void pedclick();
 
 float getAnalogAverage(int pinNumber, int samples);
 
-
-unsigned long Heartbeat_Time = 0;
-const long Heartbeat_Interval = 15000;
-
 // Homing Feedback Serial
 void homingNotification(bool isHomed) {
   if (isHomed) {
@@ -229,8 +224,11 @@ void homingNotification(bool isHomed) {
     outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
     outgoingcontrol.esp_pattern = Stroker.getPattern();
     outgoingcontrol.esp_target = M5_ID;
-    heartbeat = true;
-    esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+    esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+    
+    lastHeartbeatTime = xTaskGetTickCount();
+    m5_paired = true;
+
   } else {
     g_ui.UpdateMessage("Homing failed!");
     LogDebug("Homing failed!");
@@ -258,122 +256,166 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 // Callback when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+
   memcpy(&incomingcontrol, incomingData, sizeof(incomingcontrol));
-  switch(incomingcontrol.esp_target)
-  {
-    case OSSM_ID:
-    {
-    if(m5_first_connect == true && m5_remotelost == false){
-    LogDebug(incomingcontrol.esp_command);
-    LogDebug(incomingcontrol.esp_value);
-    switch(incomingcontrol.esp_command)
-    {
-      case ON:
-      {
-      LogDebug("ON Got");
-      Stroker.startPattern();
-      outgoingcontrol.esp_command = ON;
-      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-      }
-      break;
-      case OFF:
-      {
-      LogDebug("OFF Got");
-      Stroker.stopMotion();
-      outgoingcontrol.esp_command = OFF;
-      esp_err_t result = esp_now_send(Broadcast_Address, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
-      }
-      break;
-      case SPEED:
-      {
-      speed = incomingcontrol.esp_value; 
-      Stroker.setSpeed(speed, true);
-      }
-      break;
-      case DEPTH:
-      {
-      depth = incomingcontrol.esp_value;
-      Stroker.setDepth(depth, true);
-      }
-      break;
-      case STROKE:
-      {
-      stroke = incomingcontrol.esp_value;
-      Stroker.setStroke(stroke, true);
-      }
-      break;
-      case SENSATION:
-      {
-      sensation = incomingcontrol.esp_value;
-      Stroker.setSensation(sensation, true);
-      }
-      break;
-      case PATTERN:
-      {
-      int patter = incomingcontrol.esp_value;
-      Stroker.setPattern(patter, true);
-      LogDebug(Stroker.getPatternName(patter));
-      }
-      break;
-      case TORQE_F:
-      {
-        int torqe = incomingcontrol.esp_value * 10;
-        LogDebug(torqe);
-        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FE, torqe);
-        if (err!=SUCCESS) {
-        ModbusError e(err);
-        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
-        }
-      }
-      break;
-      case TORQE_R:
-      {
-        int torqe = 65535 - (incomingcontrol.esp_value * -10);
-        LogDebug(torqe);
-        Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FF, torqe);
-        if (err!=SUCCESS) {
-        ModbusError e(err);
-        Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
-        }
-      }
-      break;
-      case SETUP_D_I:
-      Stroker.setupDepth(10, false);
-      break;
-      case SETUP_D_I_F:
-      Stroker.setupDepth(10, true);
-      break;
-      case REBOOT:
-      ESP.restart();
-      break; 
+
+  // If no remote paired
+  if(!m5_paired){
+
+    // Assert that the incoming message is from the M5
+    if( incomingcontrol.esp_target == OSSM_ID and incomingcontrol.esp_command == HEARTBEAT){
       
-      #ifdef OTA_UPDATE
-      case OTA:
-      {
-        // Use a deepsleep reset to check upon boot the reset reason and activate OTA if needed.
-        esp_sleep_enable_timer_wakeup(500000);
-        esp_deep_sleep_start();
-        break;
+      // Remove the existing peer (0xFF:0xFF:0xFF:0xFF:0xFF:0xFF)
+      esp_err_t result = esp_now_del_peer(peerInfo.peer_addr);
+
+      if (result == ESP_OK) {
+
+        memcpy(m5RemoteAddress, mac, 6); //get the mac address of the sender
+        
+        // Add the new peer
+        memcpy(peerInfo.peer_addr, m5RemoteAddress, 6);
+        if (esp_now_add_peer(&peerInfo) == ESP_OK) {
+          LogDebugFormatted("New peer added successfully, M5 remote addresss : %02X:%02X:%02X:%02X:%02X:%02X\n", m5RemoteAddress[0], m5RemoteAddress[1], m5RemoteAddress[2], m5RemoteAddress[3], m5RemoteAddress[4], m5RemoteAddress[5]);
+        }
+        else {
+          LogDebug("Failed to add new peer");
+        }
       }
-      #endif
-    }
-    } else if(m5_first_connect == false && m5_remotelost == false && incomingcontrol.esp_command == HEARTBEAT && incomingcontrol.esp_heartbeat == true){
-        m5_first_connect = true;
-        Serial.printf("Got M5 connection, restarting homeing\n");
-        Stroker.disable();
-        if (hardwareVersion >= 20)
-        {
-          Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+      else {
+        LogDebug("Failed to remove peer");
+      }
+
+      Serial.printf("M5 remote connected! Restarting homing\n");
+      Stroker.disable();
+
+      if (hardwareVersion >= 20){
+        Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+      }
+      else{
+        Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+      }
+
+      Serial.print("Waiting for M5 remote homing to finish...");
+
+        while (!m5_paired){
+            delay(100); // wait for homing to finish      
         }
-        else
-        {
-          Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
-        }
+      LogDebugFormatted("M5 remote up and running, send HEARTBEAT command at %0.2f seconds interval\n", float(HEARTBEAT_INTERVAL / 1000));
+      m5_paired = true;
+      lastHeartbeatTime = xTaskGetTickCount();
     }
   }
+  else if (m5_paired){
+
+    switch(incomingcontrol.esp_target){
+
+      case OSSM_ID:{
+
+        if(m5_remotelost == false){
+
+          switch(incomingcontrol.esp_command){
+
+            case ON: {
+              LogDebug("ON Got");
+              Stroker.startPattern();
+              outgoingcontrol.esp_command = ON;
+              esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+              break;
+            }
+            case OFF: {
+              LogDebug("OFF Got");
+              Stroker.stopMotion();
+              outgoingcontrol.esp_command = OFF;
+              esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+              break;
+            }
+            case SPEED: {
+              speed = incomingcontrol.esp_value; 
+              Stroker.setSpeed(speed, true);
+              break;
+            }
+            case DEPTH: {
+              depth = incomingcontrol.esp_value;
+              Stroker.setDepth(depth, true);
+              break;
+            }
+            case STROKE: {
+              stroke = incomingcontrol.esp_value;
+              Stroker.setStroke(stroke, true);
+              break;
+            }
+            case SENSATION: {
+              sensation = incomingcontrol.esp_value;
+              Stroker.setSensation(sensation, true);
+              break;
+            }
+            case PATTERN: {
+              int patter = incomingcontrol.esp_value;
+              Stroker.setPattern(patter, true);
+              LogDebug(Stroker.getPatternName(patter));
+              break;  
+            }
+            case TORQE_F: {
+              int torqe = incomingcontrol.esp_value * 10;
+              LogDebug(torqe);
+              Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FE, torqe);
+              if (err!=SUCCESS) {
+              ModbusError e(err);
+              Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+              }
+              break;
+            }
+            case TORQE_R: {
+              int torqe = 65535 - (incomingcontrol.esp_value * -10);
+              LogDebug(torqe);
+              Error err = MB.addRequest(Token++, 1, WRITE_HOLD_REGISTER, 0x01FF, torqe);
+              if (err!=SUCCESS) {
+              ModbusError e(err);
+              Serial.printf("Error creating request: %02X - %s\n", (int)e, (const char *)e);
+              }
+              break;
+            }
+            case SETUP_D_I: {
+              Stroker.setupDepth(10, false);
+              break;
+            }
+            case SETUP_D_I_F: {
+              Stroker.setupDepth(10, true);
+              break;
+            }
+            case HEARTBEAT: {
+              lastHeartbeatTime = xTaskGetTickCount();
+              break;
+            }
+            case REBOOT: {
+              ESP.restart();
+              break; 
+            }
+            #ifdef OTA_UPDATE
+            case OTA:
+            {
+              // Use a deepsleep reset to check upon boot the reset reason and activate OTA if needed.
+              esp_sleep_enable_timer_wakeup(500000);
+              esp_deep_sleep_start();
+              break;
+            }
+            #endif
+          }
+        }
+        // m5_paired and remote_lost
+        else{
+
+          if(incomingcontrol.esp_command == HEARTBEAT){
+            m5_remotelost = false;
+            lastHeartbeatTime = xTaskGetTickCount();
+            Serial.println("M5 reconnected, send ON command to restart");
+          }
+        }
+      }  
+    }
   }
-  
 }
+
 
 void writeEepromSettings()
 {
@@ -535,6 +577,12 @@ void emergencyStopTask(void *pvParameters)
     //bool ped = digitalRead(SERVO_PED_PIN);
     //LogDebugFormatted("ALM: %ld \n", static_cast<long int>(alm));
     //LogDebugFormatted("PED: %ld \n", static_cast<long int>(ped));
+    if (m5_paired and (xTaskGetTickCount() - lastHeartbeatTime > HEARTBEAT_INTERVAL) and m5_remotelost == false) {
+      Serial.println("Lost Remote");
+      Stroker.stopMotion();
+      m5_remotelost = true;
+    }
+    
     static bool is_connected = false;
     if (!is_connected && g_ui.DisplayIsConnected())
     {
@@ -552,7 +600,7 @@ void emergencyStopTask(void *pvParameters)
         vTaskSuspend(CRemote_T);
 
     }
-    if(m5_first_connect == true){
+    if(m5_paired == true){
       vTaskSuspend(CRemote_T);
     }
     vTaskDelay(200);
@@ -878,16 +926,17 @@ void espNowRemoteTask(void *pvParameters)
     esp_now_register_send_cb(OnDataSent);
 
     // Register peer
-    memcpy(peerInfo.peer_addr, Broadcast_Address, 6);
+    memcpy(peerInfo.peer_addr, m5RemoteAddress, 6);
     peerInfo.channel = 0;  
     peerInfo.encrypt = false;
   
       // Add peer        
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    Serial.println("Failed to add peer");
-    vTaskSuspend(eRemote_t);
-    return;
-    } else {
+      Serial.println("Failed to add peer");
+      vTaskSuspend(eRemote_t);
+      return;
+    } 
+    else {
       vTaskSuspend(CRemote_T);
     }
     // Register for a callback function that will be called when data is received
