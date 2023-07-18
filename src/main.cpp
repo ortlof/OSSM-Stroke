@@ -102,6 +102,8 @@ typedef struct struct_message {
 
 esp_now_peer_info_t peerInfo;
 uint8_t m5RemoteAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // Broadcast to all ESP32s, upon connection gets updated to the actual address
+uint8_t defaultAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
 bool m5_paired = false;
 bool m5_remotelost = false;
 
@@ -218,18 +220,18 @@ void homingNotification(bool isHomed) {
   if (isHomed) {
     LogDebug("Found home - Ready to rumble!");
     g_ui.UpdateMessage("Homed - Ready to rumble!");
-
-    outgoingcontrol.esp_connected = true;
-    outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-    outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
-    outgoingcontrol.esp_pattern = Stroker.getPattern();
-    outgoingcontrol.esp_target = M5_ID;
-    esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
     
-    lastHeartbeatTime = xTaskGetTickCount();
-    m5_paired = true;
-
-  } else {
+    if (memcmp(m5RemoteAddress, defaultAddress, sizeof(m5RemoteAddress)) != 0) {
+      outgoingcontrol.esp_connected = true;
+      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+      outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
+      outgoingcontrol.esp_pattern = Stroker.getPattern();
+      outgoingcontrol.esp_target = M5_ID;
+      esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+      m5_paired = true;
+    }  
+  } 
+  else {
     g_ui.UpdateMessage("Homing failed!");
     LogDebug("Homing failed!");
   }
@@ -301,11 +303,11 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
             delay(100); // wait for homing to finish      
         }
       LogDebugFormatted("M5 remote up and running, send HEARTBEAT command at %0.2f seconds interval\n", float(HEARTBEAT_INTERVAL / 1000));
-      m5_paired = true;
       lastHeartbeatTime = xTaskGetTickCount();
+      m5_paired = true;
     }
   }
-  else if (m5_paired){
+  else{
 
     switch(incomingcontrol.esp_target){
 
@@ -406,12 +408,25 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
         else{
 
           if(incomingcontrol.esp_command == HEARTBEAT){
-            m5_remotelost = false;
-            lastHeartbeatTime = xTaskGetTickCount();
+            
+            outgoingcontrol.esp_connected = true;
+            outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+            outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
+            outgoingcontrol.esp_pattern = Stroker.getPattern();
+            outgoingcontrol.esp_target = M5_ID;
+            esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+
+            //Removing the default peer
+            memcpy(peerInfo.peer_addr, defaultAddress, 6);
+            if (esp_now_del_peer(peerInfo.peer_addr) != ESP_OK){
+              LogDebug("Failed to remove default peer");
+            }
             Serial.println("M5 reconnected, send ON command to restart");
+            lastHeartbeatTime = xTaskGetTickCount();
+            m5_remotelost = false;
           }
-        }
-      }  
+        }  
+      }
     }
   }
 }
@@ -581,6 +596,18 @@ void emergencyStopTask(void *pvParameters)
       Serial.println("Lost Remote");
       Stroker.stopMotion();
       m5_remotelost = true;
+
+      // Register back default peer
+      memcpy(peerInfo.peer_addr, defaultAddress, 6);
+      peerInfo.channel = 0;  
+      peerInfo.encrypt = false;
+  
+      if (esp_now_add_peer(&peerInfo) == ESP_OK){
+        LogDebug("Added default peer");
+      }
+      else{
+        LogDebug("Failed to add default peer");
+      }
     }
     
     static bool is_connected = false;
