@@ -2,13 +2,6 @@
     User Config for OSSM - Reference board users should tweak this to match their personal build.
 */
 
-/*
-        Remote config
-*/
-uint8_t Broadcast_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-uint8_t Remote_Address[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-//uint8_t Remote_Address[] = {0x08, 0x3A, 0xF2, 0x68, 0x1E, 0x74};
-
 #define EEPROM_SIZE 200
 #define HW_VERSION 22 //divide by 10 for real hw version
 
