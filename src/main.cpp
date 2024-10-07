@@ -74,6 +74,7 @@ bool out_esp_connected;
 int out_esp_command;
 float out_esp_value;
 int out_esp_target;
+int out_esp_source;
 
 float incoming_esp_speed;
 float incoming_esp_depth;
@@ -86,6 +87,7 @@ bool incoming_esp_heartbeat;
 int incoming_esp_command;
 float incoming_esp_value;
 int incoming_esp_target;
+int incoming_esp_source;
 typedef struct struct_message {
   float esp_speed;
   float esp_depth;
@@ -98,6 +100,7 @@ typedef struct struct_message {
   int esp_command;
   float esp_value;
   int esp_target;
+  int esp_source;
 } struct_message;
 
 esp_now_peer_info_t peerInfo;
@@ -220,7 +223,8 @@ void homingNotification(bool isHomed) {
   if (isHomed) {
     LogDebug("Found home - Ready to rumble!");
     g_ui.UpdateMessage("Homed - Ready to rumble!");
-    
+    strokingMachine.physicalTravel = Stroker.getPhysicalTravel();
+    LogDebug(strokingMachine.physicalTravel);
     if (memcmp(m5RemoteAddress, defaultAddress, sizeof(m5RemoteAddress)) != 0) {
       outgoingcontrol.esp_connected = true;
       outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
@@ -322,6 +326,17 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
               Stroker.startPattern();
               outgoingcontrol.esp_command = ON;
               esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+              if (result == ESP_OK) {
+                LogDebug("ON Sent");
+                break;
+              } else {
+                delay(20);
+                esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+                if (result == ESP_FAIL) {
+                  Serial.println("False");
+                  break;
+                  }  
+              }         
               break;
             }
             case OFF: {
@@ -329,6 +344,17 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
               Stroker.stopMotion();
               outgoingcontrol.esp_command = OFF;
               esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+                            if (result == ESP_OK) {
+                LogDebug("OFF Sent");
+                break;
+              } else {
+                delay(20);
+                esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
+                if (result == ESP_FAIL) {
+                  Serial.println("OFF False");
+                  break;
+                }
+              } 
               break;
             }
             case SPEED: {
@@ -338,11 +364,13 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
             }
             case DEPTH: {
               depth = incomingcontrol.esp_value;
+              LogDebug(depth);
               Stroker.setDepth(depth, true);
               break;
             }
             case STROKE: {
               stroke = incomingcontrol.esp_value;
+              LogDebug(stroke);
               Stroker.setStroke(stroke, true);
               break;
             }
@@ -414,6 +442,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
             outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
             outgoingcontrol.esp_pattern = Stroker.getPattern();
             outgoingcontrol.esp_target = M5_ID;
+            outgoingcontrol.esp_source = OSSM_ID;
             esp_err_t result = esp_now_send(m5RemoteAddress, (uint8_t *) &outgoingcontrol, sizeof(outgoingcontrol));
 
             //Removing the default peer
@@ -455,34 +484,6 @@ void setup() {
   Serial.begin(115200);         // Start Serial.
   Serial2.begin(57600, SERIAL_8E1, GPIO_NUM_16, GPIO_NUM_17);
   LogDebug("\n Starting");      // Start LogDebug
-
-  #ifdef OTA_UPDATE
-  // Check the reset reason
-  if(rtc_get_reset_reason(0) ==  DEEPSLEEP_RESET){
-
-    Serial.println("Connecting to WiFi for OTA update...");
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-
-    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-      Serial.println("Connection to WiFi failed: OTA update unavailable.");
-      Serial.println("Rebooting in normal mode...");
-      delay(1000);
-      ESP.restart();
-    }
-
-    ArduinoOTA.begin();
-
-    Serial.println("Arduino OTA Ready");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    
-    while(true){
-      ArduinoOTA.handle();
-      delay(100);
-    }
-  }
-  #endif
 
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(150);

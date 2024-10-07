@@ -246,6 +246,10 @@ int StrokeEngine::getPattern() {
     return _patternIndex;
 }
 
+int StrokeEngine::getPhysicalTravel() {
+    return _physics->physicalTravel;
+}
+
 bool StrokeEngine::startPattern() {
     // Only valid if state is ready
     if (_state == READY || _state == SETUPDEPTH) {

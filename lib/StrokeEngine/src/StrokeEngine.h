@@ -16,7 +16,7 @@
 
 // Debug Levels
 //#define DEBUG_TALKATIVE             // Show debug messages from the StrokeEngine on Serial
-//#define DEBUG_STROKE                // Show debug messaged for each individual stroke on Serial
+#define DEBUG_STROKE                // Show debug messaged for each individual stroke on Serial
 #define DEBUG_CLIPPING              // Show debug messages when motions violating the machine 
                                     // physics are commanded
 
@@ -212,6 +212,16 @@ class StrokeEngine {
         */
         /**************************************************************************/
         int getPattern();
+
+        /**************************************************************************/
+        /*!
+          @brief  Creates a FreeRTOS task to run a stroking pattern. Only valid in
+          state READY. Pattern is initialized with the values from the set 
+          functions. If the task is running, state is PATTERN.
+          @return TRUE when task was created and motion starts, FALSE on failure.
+        */
+        /**************************************************************************/
+        int getPhysicalTravel();
 
         /**************************************************************************/
         /*!
