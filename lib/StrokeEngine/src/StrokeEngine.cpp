@@ -680,7 +680,7 @@ void StrokeEngine::_sensorlessHomingProcedure() {
     Serial.print(_getAnalogAveragePercent(_sensorlessHomeingCurrentPin, 500) - currentSensorOffset);
     Serial.print(",");
     Serial.println(servo->getCurrentPosition() / _motor->stepsPerMillimeter);
-
+    Serial.println(_motor->stepsPerMillimeter);
     Serial.println("Sensorless homing move");
 #endif
     servo->runForward();
@@ -734,7 +734,7 @@ void StrokeEngine::_sensorlessHomingProcedure() {
     _physics->physicalTravel = abs(servo->getCurrentPosition()) / _motor->stepsPerMillimeter;
     _travel = (_physics->physicalTravel - (2 * _physics->keepoutBoundary));
     servo->forceStopAndNewPosition(-_motor->stepsPerMillimeter * _physics->keepoutBoundary);
-    
+
 #ifdef DEBUG_TALKATIVE
     Serial.printf("Found rail length: %f\n", _physics->physicalTravel);
 #endif

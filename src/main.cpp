@@ -171,7 +171,7 @@ static endstopProperties endstop = {
 
 static sensorlessHomeProperties sensorless = {
   .currentPin = 36,
-  .currentLimit = 1.5f
+  .currentLimit = 2.5f
 };
 
 StrokeEngine Stroker;
@@ -295,10 +295,10 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       Stroker.disable();
 
       if (hardwareVersion >= 20){
-        Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+        Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 50);
       }
       else{
-        Stroker.enableAndHome(&endstop, homingNotification); // pointer to the homing config struct
+        Stroker.enableAndHome(&endstop, homingNotification, 50); // pointer to the homing config struct
       }
 
       Serial.print("Waiting for M5 remote homing to finish...");
@@ -439,7 +439,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
             
             outgoingcontrol.esp_connected = true;
             outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
-            outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
+            outgoingcontrol.esp_depth = (strokingMachine.physicalTravel - (2 * strokingMachine.keepoutBoundary));
             outgoingcontrol.esp_pattern = Stroker.getPattern();
             outgoingcontrol.esp_target = M5_ID;
             outgoingcontrol.esp_source = OSSM_ID;
@@ -525,7 +525,7 @@ void setup() {
   Stroker.begin(&strokingMachine, &servoMotor); // Setup Stroke Engine
   if (hardwareVersion >= 20)
   {
-    Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 10);
+    Stroker.enableAndSensorlessHome(&sensorless, homingNotification, 50);
   }
   else
   {
