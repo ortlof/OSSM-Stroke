@@ -61,6 +61,8 @@ int hardwareVersion = HW_VERSION;
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
 
+float speedlimit = 300;
+
 // Variable to store if sending data was successful
 String success;
 
@@ -227,7 +229,7 @@ void homingNotification(bool isHomed) {
     LogDebug(strokingMachine.physicalTravel);
     if (memcmp(m5RemoteAddress, defaultAddress, sizeof(m5RemoteAddress)) != 0) {
       outgoingcontrol.esp_connected = true;
-      outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+      outgoingcontrol.esp_speed = speedlimit;
       outgoingcontrol.esp_depth = strokingMachine.physicalTravel;
       outgoingcontrol.esp_pattern = Stroker.getPattern();
       outgoingcontrol.esp_target = M5_ID;
@@ -438,7 +440,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
           if(incomingcontrol.esp_command == HEARTBEAT){
             
             outgoingcontrol.esp_connected = true;
-            outgoingcontrol.esp_speed = USER_SPEEDLIMIT;
+            outgoingcontrol.esp_speed = speedlimit;
             outgoingcontrol.esp_depth = (strokingMachine.physicalTravel - (2 * strokingMachine.keepoutBoundary));
             outgoingcontrol.esp_pattern = Stroker.getPattern();
             outgoingcontrol.esp_target = M5_ID;
