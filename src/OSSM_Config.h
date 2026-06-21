@@ -19,7 +19,7 @@
 #define PULLEY_TEETH      20        // How many teeth has the pulley Orginal 20
 #define BELT_PITCH        2         // What is the timing belt pitch in mm Oringal 2
 #define MAX_RPM           4500.0    // Maximum RPM of motor
-#define MAX_ACCELERATION  5000     // Maximum linear acceleration in mm/s²
+#define MAX_ACCELERATION  10000     // Maximum linear acceleration in mm/s²
 
 // This is in millimeters, and is what's used to define how much of
 // your rail is usable.
@@ -32,12 +32,12 @@
 //#define STEP_PER_MM       STEP_PER_REV / (PULLEY_TEETH * BELT_PITCH)
 #define STEP_PER_MM       78.64
 //#define MAX_SPEED         (MAX_RPM / 60.0) * PULLEY_TEETH * BELT_PITCH
-#define MAX_SPEED         2000
+#define MAX_SPEED         3000
 
 #define DEPTH_RESULTION 5 // Depth Resultion in mm per encoder Klick
 #define STROKE_RESULTION 5 // STROKE Resultion in mm per encoder Klick
 #define ENCODER_RESULTION 36 // Klicks per turn
-#define USER_SPEEDLIMIT 2000 // Speed in Cycles (in & out) per minute.
+#define USER_SPEEDLIMIT 800 // Speed in Cycles (in & out) per minute.
 
 // The minimum value of the pot in percent
 // prevents noisy pots registering commands when turned down to zero by user

@@ -1,4 +1,6 @@
 #include <Arduino.h>          // Basic Needs
+#include <cmath>
+#include <math.h>
 #include <EEPROM.h>
 #include <Wire.h>
 #include <SPI.h>
@@ -61,7 +63,7 @@ int hardwareVersion = HW_VERSION;
 volatile float speedPercentage = 0;
 volatile float sensation = 0;
 
-float speedlimit = 300;
+float speedlimit = min(USER_SPEEDLIMIT, MAX_SPEED); // linear speed limit in mm/s
 
 // Variable to store if sending data was successful
 String success;
@@ -178,6 +180,26 @@ static sensorlessHomeProperties sensorless = {
 
 StrokeEngine Stroker;
 
+#ifndef SPEED_MIN_MM_PER_SECOND
+#define SPEED_MIN_MM_PER_SECOND 1.0f
+#endif
+
+#ifndef SPEED_DEADBAND_MM_PER_SECOND
+#define SPEED_DEADBAND_MM_PER_SECOND 0.5f
+#endif
+
+#ifndef SPEED_SLEW_MM_PER_SECOND_PER_SECOND
+#define SPEED_SLEW_MM_PER_SECOND_PER_SECOND 80.0f
+#endif
+
+#ifndef SPEED_CONTROL_INTERVAL_MS
+#define SPEED_CONTROL_INTERVAL_MS 100
+#endif
+
+volatile float requestedSpeedMmPerSecond = SPEED_MIN_MM_PER_SECOND;
+float appliedSpeedMmPerSecond = SPEED_MIN_MM_PER_SECOND;
+portMUX_TYPE speedCommandMux = portMUX_INITIALIZER_UNLOCKED;
+
 ///////////////////////////////////////////
 ////
 ////  To Debug or not to Debug
@@ -202,6 +224,7 @@ StrokeEngine Stroker;
 TaskHandle_t estop_T    = nullptr;  // Estop Taks for Emergency 
 TaskHandle_t CRemote_T  = nullptr;  // Cable Remote Task 
 TaskHandle_t eRemote_t  = nullptr;  // Esp Now Remote
+TaskHandle_t Speed_T    = nullptr;  // Smooth speed command limiter
 
 #define BRIGHTNESS 170
 #define LED_TYPE WS2811
@@ -219,6 +242,10 @@ void almclick();
 void pedclick();
 
 float getAnalogAverage(int pinNumber, int samples);
+float clampSpeedMmPerSecond(float requestedSpeed);
+void requestSpeedMmPerSecond(float requestedSpeed);
+float getRequestedSpeedMmPerSecond();
+void speedCommandTask(void *pvParameters);
 
 // Homing Feedback Serial
 void homingNotification(bool isHomed) {
@@ -360,8 +387,8 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
               break;
             }
             case SPEED: {
-              speed = incomingcontrol.esp_value; 
-              Stroker.setSpeed(speed, true);
+              speed = incomingcontrol.esp_value;
+              requestSpeedMmPerSecond(speed);
               break;
             }
             case DEPTH: {
@@ -552,6 +579,15 @@ void setup() {
                             &CRemote_T,         /* Task handle to keep track of created task */
                             0);                 /* pin task to core 0 */
   delay(100);
+
+  xTaskCreatePinnedToCore(speedCommandTask,      /* Task function. */
+                            "speedCommandTask", /* name of task. */
+                            3072,               /* Stack size of task */
+                            NULL,               /* parameter of the task */
+                            4,                  /* priority of the task */
+                            &Speed_T,           /* Task handle to keep track of created task */
+                            0);                 /* pin task to core 0 */
+  delay(100);
   
   xTaskCreatePinnedToCore(espNowRemoteTask,      /* Task function. */
                             "espNowRemoteTask",  /* name of task. */
@@ -575,7 +611,8 @@ void setup() {
   while (Stroker.getState() != READY) {
     delay(100);
   }
-  Stroker.setSpeed(0.0, true);
+  requestSpeedMmPerSecond(SPEED_MIN_MM_PER_SECOND);
+  Stroker.setSpeed(SPEED_MIN_MM_PER_SECOND, false); // mm/s
   Stroker.setDepth(0.0, true);
   Stroker.setStroke(0.0, true);
   Stroker.setPattern(2,true);
@@ -585,6 +622,61 @@ void loop() {
   g_ui.UpdateScreen();
   //PED.tick();
   //ALM.tick();
+}
+
+float clampSpeedMmPerSecond(float requestedSpeed)
+{
+  if (!std::isfinite(requestedSpeed)) {
+    return SPEED_MIN_MM_PER_SECOND;
+  }
+
+  // PR #239 moves StrokeEngine toward linear speed. Keep that contract here:
+  // remote/UI speed is a physical actuator speed in mm/s, never a raw FPM
+  // value that can crush _timeOfStroke into silly territory.
+  return constrain(requestedSpeed, SPEED_MIN_MM_PER_SECOND, speedlimit);
+}
+
+void requestSpeedMmPerSecond(float requestedSpeed)
+{
+  float safeSpeed = clampSpeedMmPerSecond(requestedSpeed);
+
+  portENTER_CRITICAL(&speedCommandMux);
+  requestedSpeedMmPerSecond = safeSpeed;
+  portEXIT_CRITICAL(&speedCommandMux);
+}
+
+float getRequestedSpeedMmPerSecond()
+{
+  float target;
+
+  portENTER_CRITICAL(&speedCommandMux);
+  target = requestedSpeedMmPerSecond;
+  portEXIT_CRITICAL(&speedCommandMux);
+
+  return target;
+}
+
+void speedCommandTask(void *pvParameters)
+{
+  const float maxStepPerTick = SPEED_SLEW_MM_PER_SECOND_PER_SECOND * (float(SPEED_CONTROL_INTERVAL_MS) / 1000.0f);
+
+  for (;;)
+  {
+    float targetSpeed = getRequestedSpeedMmPerSecond();
+    float delta = targetSpeed - appliedSpeedMmPerSecond;
+
+    if (fabsf(delta) > SPEED_DEADBAND_MM_PER_SECOND) {
+      delta = constrain(delta, -maxStepPerTick, maxStepPerTick);
+      appliedSpeedMmPerSecond = clampSpeedMmPerSecond(appliedSpeedMmPerSecond + delta);
+
+      // StrokeEngine::setSpeed() now means linear mm/s. Apply changes on the
+      // next pattern segment instead of rewriting the active move immediately.
+      // The gearbox gets less opportunity to announce its backlash to the room.
+      Stroker.setSpeed(appliedSpeedMmPerSecond, false);
+    }
+
+    vTaskDelay(SPEED_CONTROL_INTERVAL_MS / portTICK_PERIOD_MS);
+  }
 }
 
 void emergencyStopTask(void *pvParameters)
@@ -933,10 +1025,10 @@ void CableRemoteTask(void *pvParameters)
      speed = getAnalogAverage(SPEED_POT_PIN, 200); // get average analog reading, function takes pin and # samples
      g_ui.UpdateStateL(speed);
      //LogDebug(speed);
-     speed = fscale(0.00, 99.98, 0.5, USER_SPEEDLIMIT, speed, -1);
+     speed = fscale(0.00, 99.98, SPEED_MIN_MM_PER_SECOND, speedlimit, speed, -1); // mm/s
      //LogDebug(speed);
      
-     Stroker.setSpeed(speed, true);
+     requestSpeedMmPerSecond(speed);
      vTaskDelay(100);
    }
 }

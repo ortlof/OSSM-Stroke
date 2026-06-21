@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "MotionDriver.h"
 #include <pattern.h>
 
 // Debug Levels
@@ -80,10 +81,11 @@ typedef struct {
 /**************************************************************************/
 typedef enum {
   UNDEFINED,          //!< No power to the servo. We don't know its position
-  READY,             //!< Servo is energized and knows it position. Not running.
+  READY,             //!< Servo is energized and knows its position. Not running.
   PATTERN,           //!< Stroke Engine is running and servo is moving according to defined pattern.
   SETUPDEPTH,        //!< Interactive adjustment mode to setup depth and stroke
-  STREAMING          //!< Tracks the depth-position whenever depth is updated.
+  STREAMING,         //!< Tracks the depth-position whenever depth is updated.
+  STOPPING           //!< Servo is decelerating to a controlled stop.
 } ServoState;
 
 // Verbose strings of states for debugging purposes
@@ -92,7 +94,8 @@ static String verboseState[] = {
   "[1] Servo ready",
   "[2] Servo pattern running",
   "[3] Servo setup depth",
-  "[4] Servo position streaming"
+  "[4] Servo position streaming",
+  "[5] Servo stopping"
 };
 
 /**************************************************************************/
@@ -114,26 +117,51 @@ class StrokeEngine {
         */
         /**************************************************************************/
         void begin(machineGeometry *physics, motorProperties *motor);
+        void begin(machineGeometry *physics, motorProperties *motor, MotionDriver *driver);
+        ~StrokeEngine();
 
         /**************************************************************************/
         /*!
-          @brief  Set the speed of a stroke. Speed is given in Strokes per Minute
-          and internally calculated to the time a full stroke needs to complete. 
-          Settings tale effect with next stroke, or after calling 
-          applyNewSettingsNow().
-          @param speed Strokes per Minute. Is constrained from 0.5 to 6000 
-          @param applyNow Set to true if changes should take effect immediately 
+          @brief  Set the commanded linear actuator speed in mm/s.
+                  Internally this is converted to a pattern stroke time so that
+                  normal trapezoid patterns do not request a peak speed above
+                  the configured motor max speed. This replaces the old
+                  stroke-per-minute speed model, because gearboxes dislike
+                  surprise math violence.
+          @param speedMmPerSecond Linear actuator speed in mm/s. Clamped to
+                                  0..motor.maxSpeed.
+          @param applyNow Set to true if changes should take effect immediately.
         */
         /**************************************************************************/
-        void setSpeed(float speed, bool applyNow);
+        void setSpeed(float speedMmPerSecond, bool applyNow);
 
         /**************************************************************************/
         /*!
-          @brief  Get the speed of a stroke. Speed is returned as Strokes per Minute. 
-          @return Strokes per Minute.
+          @brief  Compatibility helper for callers that still think in strokes
+                  per minute. Converts FPM to a linear peak speed using the
+                  current stroke length, then calls setSpeed().
+          @param strokesPerMinute Stroke rate in full strokes per minute.
+          @param applyNow Set to true if changes should take effect immediately.
+        */
+        /**************************************************************************/
+        void setSpeedFpm(float strokesPerMinute, bool applyNow);
+
+        /**************************************************************************/
+        /*!
+          @brief  Get the currently commanded linear speed in mm/s.
+          @return Linear actuator speed in mm/s.
         */
         /**************************************************************************/
         float getSpeed();
+
+        /**************************************************************************/
+        /*!
+          @brief  Get the equivalent legacy stroke rate for the current stroke
+                  length. Returns 0 if the stroke length is 0.
+          @return Strokes per minute.
+        */
+        /**************************************************************************/
+        float getSpeedFpm();
 
         /**************************************************************************/
         /*!
@@ -239,7 +267,51 @@ class StrokeEngine {
           in state READY afterwards.
         */
         /**************************************************************************/
-        void stopMotion();
+        void stopMotion(float decelerationMmPerSecondSquared = 0.0f, bool emergency = false);
+
+        /**************************************************************************/
+        /*!
+          @brief  Requests a non-blocking controlled stop. In PATTERN state the
+                  stroking task applies the stop and transitions through STOPPING
+                  to READY. If deceleration is <= 0, the configured default stop
+                  acceleration is used.
+        */
+        /**************************************************************************/
+        void requestStop(float decelerationMmPerSecondSquared = 0.0f, bool emergency = false);
+
+        void setDefaultStopAcceleration(float decelerationMmPerSecondSquared);
+        float getDefaultStopAcceleration();
+
+        /**************************************************************************/
+        /*!
+          @brief  Scales acceleration for every pattern move. Use this to globally
+                  calm the machine without changing the configured physical safety
+                  limit. 1.0 keeps existing behavior, 0.5 halves pattern acceleration.
+        */
+        /**************************************************************************/
+        void setMotionAccelerationFactor(float factor);
+        float getMotionAccelerationFactor();
+
+        /**************************************************************************/
+        /*!
+          @brief  Extra acceleration reduction applied only when the next move
+                  reverses direction. Useful for geared rack and pinion systems
+                  with backlash. 1.0 keeps existing behavior, lower values soften
+                  reversal.
+        */
+        /**************************************************************************/
+        void setReversalAccelerationFactor(float factor);
+        float getReversalAccelerationFactor();
+
+        /**************************************************************************/
+        /*!
+          @brief  Adds a small pause after each completed pattern move before
+                  commanding the next move. This lets backlash and drivetrain
+                  compliance settle before reversing direction.
+        */
+        /**************************************************************************/
+        void setEndpointDwellMillis(int dwellMillis);
+        int getEndpointDwellMillis();
 
         /**************************************************************************/
         /*!
@@ -417,9 +489,21 @@ class StrokeEngine {
         int _stroke;
         int _previousStroke;
         float _timeOfStroke;
+        float _linearSpeedMmPerSecond = 0.0f;
+        int _linearSpeedStepsPerSecond = 1;
         float _sensation;
         bool _applyUpdate = false;
         bool _abortHoming = false;
+        MotionDriver *_driver = NULL;
+        bool _ownsDriver = false;
+        int _defaultStopAcceleration = 0;
+        float _motionAccelerationFactor = 1.0f;
+        float _reversalAccelerationFactor = 0.35f;
+        int _endpointDwellMillis = 10;
+        int _lastMoveDirection = 0;
+        volatile bool _stopRequested = false;
+        volatile bool _stopRequestEmergency = false;
+        volatile int _requestedStopAcceleration = 0;
         static void _homingProcedureImpl(void* _this) { static_cast<StrokeEngine*>(_this)->_homingProcedure(); }
         void _homingProcedure();
         void _sensorHomingProcedure();
@@ -433,6 +517,12 @@ class StrokeEngine {
         TaskHandle_t _taskStreamingHandle = NULL;
         SemaphoreHandle_t _patternMutex = xSemaphoreCreateMutex();
         void _applyMotionProfile(motionParameter* motion);
+        void _injectCurrentPatternSettings();
+        void _updatePatternTimeFromLinearSpeed();
+        int _resolveStopAcceleration(float decelerationMmPerSecondSquared);
+        int _limitStopAccelerationForTravel(int requestedAcceleration);
+        void _beginStop(int stopAcceleration, bool emergency);
+        void _completeStop();
         void(*_callBackHomeing)(bool) = NULL;
         void(*_callbackTelemetry)(float, float, bool) = NULL;
         bool _sensorlessHomeing;

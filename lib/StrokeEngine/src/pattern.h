@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <StrokeEngine.h>
 #include <math.h>
+#include <string.h>
 #include "PatternMath.h"
 
 #define DEBUG_PATTERN                 // Print some debug informations over Serial
@@ -83,6 +84,15 @@ class Pattern {
         */
         virtual void setSensation(float sensation) { _sensation = sensation; } 
 
+        //! Add a short pause after a move has completed and before the next move is commanded.
+        /*!
+          @param dwellMillis Pause time in milliseconds. Clamped to 0..500 ms.
+        */
+        virtual void setEndpointDwellMillis(int dwellMillis) {
+            _endpointDwellMillis = constrain(dwellMillis, 0, 500);
+            _endpointDwellIndex = 0xffffffffUL;
+        }
+
         //! Retrives the name of a pattern
         /*! 
           @return c_string containing the name of a pattern 
@@ -120,6 +130,9 @@ class Pattern {
         unsigned int _maxSpeed = 0;
         unsigned int _maxAcceleration = 0;
         unsigned int _stepsPerMM = 0;
+        int _endpointDwellMillis = 0;
+        unsigned long _endpointDwellStartMillis = 0;
+        unsigned long _endpointDwellIndex = 0xffffffffUL;
 
         /*!
           @brief Start a delay timer which can be polled by calling _isStillDelayed(). 
@@ -147,6 +160,31 @@ class Pattern {
             return (millis() > (_startDelayMillis + _delayInMillis)) ? false : true; 
         }
 
+        /*!
+          @brief Dwell before issuing the next pattern move. StrokeEngine calls
+                 nextTarget() only after the previous move has completed, so this
+                 pauses exactly at the reversal point. The first move is not
+                 delayed.
+          @return True while the pattern should skip and wait.
+        */
+        bool _applyEndpointDwell(unsigned int index) {
+            if (_endpointDwellMillis <= 0 || index == 0) {
+                _nextMove.skip = false;
+                return false;
+            }
+
+            if (_endpointDwellIndex != index) {
+                _endpointDwellIndex = index;
+                _endpointDwellStartMillis = millis();
+                _nextMove.skip = true;
+                return true;
+            }
+
+            bool stillDwelling = ((unsigned long)(millis() - _endpointDwellStartMillis) < (unsigned long)_endpointDwellMillis);
+            _nextMove.skip = stillDwelling;
+            return stillDwelling;
+        }
+
 };
 
 /**************************************************************************/
@@ -166,6 +204,10 @@ class SimpleStroke : public Pattern {
         }   
 
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // maximum speed of the trapezoidal motion 
             _nextMove.speed = int(1.5 * _stroke/_timeOfStroke);
 
@@ -207,6 +249,10 @@ class TeasingPounding : public Pattern {
             _updateStrokeTiming();
         }
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // odd stroke is moving out
             if (index % 2) {
                 // maximum speed of the trapezoidal motion
@@ -283,6 +329,10 @@ class RoboStroke : public Pattern {
         }
 
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // maximum speed of the trapezoidal motion
             float speed = float(_stroke) / ((1 - _x) * _timeOfStroke);
             _nextMove.speed = int(speed); 
@@ -328,6 +378,10 @@ class HalfnHalf : public Pattern {
             _updateStrokeTiming();
         }
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // check if this is the very first 
             if (index == 0) {
               //pattern started for the very fist time, so we start gentle with a half move
@@ -419,6 +473,10 @@ class Deeper : public Pattern {
         }
 
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // How many steps is each stroke advancing         
             int slope = _stroke / (_countStrokesForRamp);
 
@@ -485,6 +543,10 @@ class StopNGo : public Pattern {
         }
 
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
             // maximum speed of the trapezoidal motion 
             _nextMove.speed = int(1.5 * _stroke/_timeOfStroke); 
 
@@ -583,6 +645,10 @@ class Insist : public Pattern {
         }
 
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
 
             // acceleration & speed to meet the profile
             _nextMove.acceleration = _acceleration;
@@ -625,7 +691,7 @@ class Insist : public Pattern {
             _speed = int(1.5 * _stroke/_timeOfStroke);
 
             // Acceleration to hold 1/3 profile with fractional strokes
-            _acceleration = int(3.0 * _nextMove.speed/(_timeOfStroke * _strokeFraction));
+            _acceleration = int(3.0 * _speed/(_timeOfStroke * _strokeFraction));
 
             // Calculate fractional stroke length
             _realStroke = int((float)_stroke * _strokeFraction);
@@ -662,6 +728,10 @@ class JackHammer : public Pattern {
             _updateVibrationParameters(); 
         }
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
 
             // revert position for the first move or if depth is exceeded
             if (index == 0 || _nextMove.stroke >= _depth) {
@@ -750,6 +820,10 @@ class StrokeNibbler : public Pattern {
             _updateVibrationParameters(); 
         }
         motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
 
             // revert position to start for the first stroke
             if (index == 0) {
@@ -836,71 +910,192 @@ class StrokeNibbler : public Pattern {
 
 /**************************************************************************/
 /*!
-  @brief  Knot: a modification of my Struggle pattern to have a pause added
-  at the end of the stroke and to use sensation to change the speed of the
-  slow portion of the stroke rather than how much of the stroke is slow.
+  @brief Knot pattern with sensation-controlled slow-start position.
+
+  Sensation mapping:
+    -100 => slow part starts at 5% of the active stroke
+       0 => slow part starts at 50% of the active stroke
+     100 => slow part starts at 95% of the active stroke
+
+  The 5%/95% clamp keeps both the fast and slow portions visible. Without it,
+  the pattern can legitimately command a zero-length fast or slow move, which
+  looks like the machine has stopped even when the code is technically doing
+  exactly what it was told. Machines are annoying like that.
+
+  StrokeEngine passes seconds per full stroke to setTimeOfStroke(). This class
+  stores the half-stroke time internally, matching the other patterns.
 */
 /**************************************************************************/
 
+#ifndef KNOT_MIN_SPEED_INPUT
+#define KNOT_MIN_SPEED_INPUT 1.0f
+#endif
+
+#ifndef KNOT_MAX_SPEED_INPUT
+#define KNOT_MAX_SPEED_INPUT 6000.0f
+#endif
+
+#ifndef KNOT_MIN_TIME_OF_STROKE
+#define KNOT_MIN_TIME_OF_STROKE 0.005f
+#endif
+
+#ifndef KNOT_FAST_SPEED_FACTOR
+#define KNOT_FAST_SPEED_FACTOR 1.1f
+#endif
+
+#ifndef KNOT_SLOW_SPEED_FACTOR
+#define KNOT_SLOW_SPEED_FACTOR 0.03f
+#endif
+
+#ifndef KNOT_FAST_ACCEL_FACTOR
+#define KNOT_FAST_ACCEL_FACTOR 1.50f
+#endif
+
+#ifndef KNOT_SLOW_ACCEL_FACTOR
+#define KNOT_SLOW_ACCEL_FACTOR 2.30f
+#endif
+
+#ifndef KNOT_RETURN_ACCEL_FACTOR
+#define KNOT_RETURN_ACCEL_FACTOR 2.00f
+#endif
+
+#ifndef KNOT_STOP_SHORT_RATIO
+#define KNOT_STOP_SHORT_RATIO 0.92f
+#endif
+
+#ifndef KNOT_MIN_SLOW_RATIO_GAP
+#define KNOT_MIN_SLOW_RATIO_GAP 0.05f
+#endif
+
 class Knot : public Pattern {
-    public:
-        Knot(const char *str) : Pattern(str){}
-            void setTimeOfStroke(float speed = 0) {
-                _timeOfStroke = 0.5 * speed;
-                _speed = speed;
-            }
-            void setSensation(float sensation) {
-                _sensation = float(abs((sensation) / 1000) + 0.001);
-            }
-            void _updateDelay(int delayInMillis) {
-                _delayInMillis = delayInMillis;
-            }
+public:
+    Knot(const char *str) : Pattern(str) {}
 
-            motionParameter nextTarget(unsigned int index) {
-                _nextMove.acceleration = int(3 * _nextMove.speed/_timeOfStroke);
-                //fancy equation to calculate the pause in milliseconds using the current speed as an input. put it into the Desmos web graphing calculator
-                //with Y as the delay in ms and X as speed to get an idea for a given speed what the corrosponding delay would be. Tweak the 3 numbers in Desmos
-                //and not here in the pattern as it's hard to conceptualize how it'll change.
-                _delayInMillis = ((sqrt((350000 * _speed)+60000)) + 600);
+    void setTimeOfStroke(float timeOfStroke = 1.0f) {
+        // StrokeEngine gives this value as seconds per full stroke, not FPM.
+        float safeFullStrokeTime = constrain(timeOfStroke, 0.01f, 120.0f);
 
-                if (_isStillDelayed() == false) {
-                    if (index % 5 == 1) {
-                        _nextMove.acceleration = int(1.5 * _nextMove.speed/_timeOfStroke);
-                        _nextMove.speed = int(0.8 * _stroke/_timeOfStroke);
-                        //70% of the stroke looks good visually. tweak the below 0.70 to change the % of the in stroke is at normal speed
-                        _nextMove.stroke = int((_depth - _stroke) + (_stroke * 0.70));
-                    }
-                    else if (index % 5 == 2) {
-                        _startDelay();
-                    }
-                    else if (index % 5 == 3) {
-                        _nextMove.acceleration = int(2.3 * _nextMove.speed/_timeOfStroke);
-                        _nextMove.speed = int(_sensation * _stroke/_timeOfStroke);
-                        _nextMove.stroke = _depth;
-                        //Uncomment the following 2 lines to see the current speed value printed and then the corrosponding delay in ms. Useful for tweaking the equation for tweaking the delay curve.
-                        Serial.println("Speed: " + String(_speed));
-                        Serial.println("Delay in ms: " + String(_delayInMillis));
-                    }
-                    else if (index % 5 == 4) {
-                        _startDelay();
-                    }
-                    else  {
-                        _nextMove.acceleration = int(2 * _nextMove.speed/_timeOfStroke);
-                        _nextMove.speed = int(0.8 * _stroke/_timeOfStroke);
-                        _nextMove.stroke = _depth - _stroke;
-                    }
-                    _nextMove.skip = false;
-                }
-                else {
-                    _nextMove.skip = true;
-                }
+        // Other patterns store the time for one half-stroke internally.
+        // IMPORTANT: this must stay in seconds. A previous value of 1.0f here
+        // forced the Knot pattern to crawl even when the remote speed was high.
+        _timeOfStroke = fmaxf(KNOT_MIN_TIME_OF_STROKE, 0.5f * safeFullStrokeTime);
 
-            _index = index;
-            return _nextMove;
+        // Keep FPM only for debug and future tuning.
+        _speed = constrain(60.0f / safeFullStrokeTime, KNOT_MIN_SPEED_INPUT, KNOT_MAX_SPEED_INPUT);
+    }
+
+    void setSensation(float sensation) {
+        _sensation = constrain(sensation, -100.0f, 100.0f);
+
+        // -100 => early slow point, +100 => late slow point.
+        // Keep a guaranteed slow section before the stop-short target, otherwise
+        // high sensation values can collapse the slow move into nothing. Because
+        // apparently even motion profiles need guardrails.
+        float mappedRatio = (_sensation + 100.0f) / 200.0f;
+        float maxSlowStartRatio = fmaxf(0.05f, _stopShortRatio - KNOT_MIN_SLOW_RATIO_GAP);
+        _slowStartRatio = constrain(mappedRatio, 0.05f, maxSlowStartRatio);
+    }
+
+    motionParameter nextTarget(unsigned int index) {
+            if (_applyEndpointDwell(index)) {
+                _index = index;
+                return _nextMove;
+            }
+        _index = index;
+
+        switch (index % 3) {
+            case 0:
+                // Pull out to the start of the active stroke.
+                setMove(calculateStrokeStart(), KNOT_FAST_SPEED_FACTOR, KNOT_RETURN_ACCEL_FACTOR);
+                break;
+
+            case 1:
+                // Fast travel to the sensation-controlled slow point.
+                setMove(calculateSlowStartStroke(), KNOT_FAST_SPEED_FACTOR, KNOT_FAST_ACCEL_FACTOR);
+                break;
+
+            case 2:
+                // Slow move, but stop short of full depth. The next step pulls out.
+                setMove(calculateStopShortStroke(), KNOT_SLOW_SPEED_FACTOR, KNOT_SLOW_ACCEL_FACTOR);
+
+                #ifdef KNOT_DEBUG
+                    Serial.println("Knot speed FPM: " + String(_speed));
+                    Serial.println("Knot slow start ratio: " + String(_slowStartRatio, 3));
+                    Serial.println("Knot stop short ratio: " + String(_stopShortRatio, 3));
+                    Serial.println("Knot stroke start target: " + String(calculateStrokeStart()));
+                    Serial.println("Knot slow start target: " + String(calculateSlowStartStroke()));
+                    Serial.println("Knot stop short target: " + String(calculateStopShortStroke()));
+                    Serial.println("Knot depth target: " + String(_depth));
+                #endif
+                break;
         }
-    private:
-        float _speed;
+
+        return _nextMove;
+    }
+
+private:
+    float _speed = KNOT_MIN_SPEED_INPUT;
+    float _slowStartRatio = 0.70f;
+    float _stopShortRatio = constrain(KNOT_STOP_SHORT_RATIO, 0.10f, 0.99f);
+
+    int activeStroke() const {
+        // Do not let the pattern request positions before the front/min limit.
+        return constrain(_stroke, 0, _depth);
+    }
+
+    int calculateStrokeStart() const {
+        return _depth - activeStroke();
+    }
+
+    int calculateSlowStartStroke() const {
+        int safeStroke = activeStroke();
+        float strokeStart = float(_depth - safeStroke);
+        float target = strokeStart + (float(safeStroke) * _slowStartRatio);
+        return constrain(int(roundf(target)), 0, _depth);
+    }
+
+    int calculateStopShortStroke() const {
+        int safeStroke = activeStroke();
+        int strokeStart = _depth - safeStroke;
+        int slowStart = calculateSlowStartStroke();
+
+        float targetFloat = float(strokeStart) + (float(safeStroke) * _stopShortRatio);
+        int target = int(roundf(targetFloat));
+
+        // Keep the stop-short target after the slow-start target.
+        target = max(target, slowStart + 1);
+
+        // Keep it genuinely short of full depth when there is enough room.
+        if ((_depth > 0) && (target >= _depth) && (safeStroke > 1)) {
+            target = _depth - 1;
+        }
+
+        return constrain(target, 0, _depth);
+    }
+
+    void setMove(int targetStroke, float speedFactor, float accelFactor) {
+        float safeTimeOfStroke = fmaxf(KNOT_MIN_TIME_OF_STROKE, _timeOfStroke);
+        int safeStroke = max(1, activeStroke());
+
+        int targetSpeed = int(speedFactor * float(safeStroke) / safeTimeOfStroke);
+        targetSpeed = max(1, targetSpeed);
+        if (_maxSpeed > 0) {
+            targetSpeed = min(targetSpeed, int(_maxSpeed));
+        }
+
+        int targetAcceleration = int(accelFactor * float(targetSpeed) / safeTimeOfStroke);
+        targetAcceleration = max(1, targetAcceleration);
+        if (_maxAcceleration > 0) {
+            targetAcceleration = min(targetAcceleration, int(_maxAcceleration));
+        }
+
+        _nextMove.stroke = constrain(targetStroke, 0, _depth);
+        _nextMove.speed = targetSpeed;
+        _nextMove.acceleration = targetAcceleration;
+        _nextMove.skip = false;
+    }
 };
+
 
 /**************************************************************************/
 /*
@@ -916,6 +1111,7 @@ static Pattern *patternTable[] = {
   new StopNGo("Stop'n'Go"),
   new Insist("Insist"),
   new Knot("Knot"),
+  //new Wave("Wave"),
   //new JackHammer("Jack Hammer"),
   // new StrokeNibbler("Stroke Nibbler")
   // <-- insert your new pattern class here!
